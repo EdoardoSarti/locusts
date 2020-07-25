@@ -1,11 +1,4 @@
-# Name: 
-# Language: python3
-# Libraries:
-# Description: 
-# Author: Edoardo Sarti
-# Date: 
-
-from manager_supporting_functions import *
+from support import *
 
 def create_exec_file(str_set, command_template, output_filename_templates, exec_filename, shared_inputs=[], inputs_for_clean_environment=[]):
 	with open(exec_filename, "w") as exec_file:
@@ -504,9 +497,28 @@ def run_PPM(options, locations, str_set, str_data, skip_PPM=False):
 
 	return str_data
 
+def launch(indir=None, outdir=None, code=None, spcins=None, shdins=None,
+        outs=None, cmd=None):
+    # Check args
+    if not (indir and outdir and cod and spcins and outs and cmd:
+        print("ERROR (launch): Please specify all the arguments. Only shared")
+        print("                inputs are optional")
+
+    # Compile set of IDs basing on the files in indir
+    id_set = set()
+    spc_format = spcins.replace("<id>", "*")
+    inp_list = subprocess.run(["grep", spc_format, indir+"/*"], stdout=subprocess.PIPE, stderr=open("/dev/null", "w")).stdout.read().decode('ascii').strip()
+    id_place = spc_format.index("*")
+    for inp in inp_list:
+        suffix_len = len(spc_format)-id_place-1
+        id_set.add(inp[id_place:-suffix_len])
+    
+    create_exec_file
+    
 
 def test_managers():
 	my_input_dir = ""
+	my_output_dir = ""
 
 	with open(locations['FSYSPATH']['cache'] +'/res.lib', "w") as f:
 		f.write("cicciput\n")
