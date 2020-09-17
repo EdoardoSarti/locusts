@@ -23,7 +23,7 @@ long_description = (here / 'README.md').read_text(encoding='utf-8')
 
 setup(
     name = 'locusts',
-    version = get_version("package/__init__.py"),
+    version = get_version("src/locusts/__init__.py"),
     description = 'Distributes many short tasks on multicore and hpc systems',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -51,11 +51,11 @@ setup(
     package_dir={'': 'src'},
     packages=find_packages(where='src'),
     python_requires='>=3.5, <4',
-    install_requires=['os', 'sys', 'subprocess'],
     project_urls={  # CHANGE
         'Bug Reports': 'https://github.com/pypa/sampleproject/issues',
         'Funding': 'https://donate.pypi.org',
         'Say Thanks!': 'http://saythanks.io/to/example',
         'Source': 'https://github.com/pypa/sampleproject/',
     },
+    include_package_data=True
 )

@@ -1,0 +1,3 @@
+- in the safe environments of the exec filesystems, the folders do not correspond to the respective input files (the input files and task.sh agree, they are though misplaces wrt the name of the folder)
+- the system stalls and does not run in parallel (in local)
+- the system does not work in biowulf

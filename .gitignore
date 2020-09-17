@@ -1,0 +1,4 @@
+/build/
+/tests/test_manager/my_input_dir/*
+/tests/test_manager/my_output_dir/*
+/dist/
