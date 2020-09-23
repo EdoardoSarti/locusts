@@ -116,3 +116,9 @@ def distribute_items_in_fixed_length_list(n_items, list_length):
     list_1 = [((list_length - 1) // n_items) + 1]
     list_2 = [list_length // n_items]
     return list_1 * factor_1 + list_2 * factor_2
+
+
+def reduceslash(string):
+    while string != string.replace("//", "/"):
+        string = string.replace("//", "/")
+    return string.strip()

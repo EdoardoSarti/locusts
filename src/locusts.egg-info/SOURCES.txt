@@ -2,8 +2,10 @@ MANIFEST.in
 README.md
 setup.py
 src/locusts/__init__.py
+src/locusts/environment.py
 src/locusts/manager.py
 src/locusts/support.py
+src/locusts/swarm.py
 src/locusts/template_manager.txt
 src/locusts.egg-info/PKG-INFO
 src/locusts.egg-info/SOURCES.txt
