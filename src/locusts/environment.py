@@ -1,4 +1,4 @@
-from locusts.manager import *
+from locusts.support import *
 
 def find_empty_folders(dirs, files):
     """Finds all folders that do not contain any file nor subfolder"""
@@ -182,10 +182,10 @@ def parse_fs_tree(fst_path, env_root):
     instructions = [] 
     for d in new_dirs:
         rd = "/".join([x for x in d.replace(env_root, "").split("/") if x])
-        instructions.append("mkdir <root_dest>/{0}".format(rd))
+        instructions.append("<mkdir> <runtime_envroot_mkdir>/{0}".format(rd))
     for f in new_files:
         rf = "/".join([x for x in f.replace(env_root, "").split("/") if x])
-        instructions.append("<copy> <root_env>/{0} <root_dest>/{1}".format(rf, os.path.dirname(rf)))
+        instructions.append("<copy> <build_envroot>/{0} <runtime_envroot_cp>/{1}".format(rf, os.path.dirname(rf)))
 
     return instructions
 
