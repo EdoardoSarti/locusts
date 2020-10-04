@@ -187,7 +187,7 @@ def parse_fs_tree(fst_path, env_root):
         rf = "/".join([x for x in f.replace(env_root, "").split("/") if x])
         instructions.append("<copy> <build_envroot>/{0} <runtime_envroot_cp>/{1}".format(rf, os.path.dirname(rf)))
 
-    return instructions
+    return workdir, instructions
 
 
 if __name__ == "__main__":

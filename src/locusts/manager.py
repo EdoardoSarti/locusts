@@ -1,4 +1,5 @@
 from locusts.support import *
+from locusts.environment import *
 
 def create_exec_file(id_list, command_template, indir, outdir, output_filename_templates,
         exec_filename, shared_inputs=[], inputs_for_clean_environment=[]):
@@ -22,15 +23,16 @@ def check_remote_path(remote_machine, root_path):
     lsdirup = subprocess.Popen(["ssh", remote_machine, "ls", os.path.dirname(root_path[:-1])], stdout=open('/dev/null', 'w'), stderr=subprocess.PIPE).stderr.read().decode('ascii').strip()
     # If parent directory of root path is not there, error
     if "ls: cannot access" in lsdirup: # If ls on parent directory gives error
-        print('Failed to create {0}\nPath {1} not present'
+        print('Failed to create {0}\nPath {1} not present' \
             .format(root_path, os.path.dirname(root_path[:-1])))
         print(lsdirup)
         exit(1)
     # If root path already there, error: you must delete it yourself
     elif "ls: cannot access" not in lsdir: # If ls on the exec directory does not give error
         print(('Exec path {0} is already present in remote location {1}\n'
-            'No permission to overwrite it, please delete it manually.')
+            'No permission to overwrite it, please delete it manually.') \
             .format(root_path, remote_machine))
+        print('ssh {1} rm -rf {0}'.format(root_path, remote_machine))
         exit(1)
 
 
@@ -53,20 +55,21 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         # localbuild_root_path <- real filesystem root
         if not os.path.exists(runtime_root_path):
              os.mkdir(runtime_root_path)
-        localbuild_root_path = runtime_root_path = os.path.abspath(runtime_root_path)
+        localbuild_root_path = runtime_root_path = os.path.abspath(runtime_root_path) + '/'
     elif protocol == "remote":
         # localbuild_root_path <- temporary local path
         # WARNING: PAY ATTENTION TO THE FORMAT OF cache_dir!!!
         localbuild_root_path = reduceslash(cache_dir + "/" + batch_job_code + "_tmp_root/")
         if not os.path.exists(localbuild_root_path):
             os.mkdir(localbuild_root_path)
-        localbuild_root_path = os.path.abspath(localbuild_root_path)
+            print("mkdir", localbuild_root_path)
+        localbuild_root_path = os.path.abspath(localbuild_root_path) + '/'
     elif protocol == "remote-sharedfs":
         # localbuild_root_path <- local shared folder (real filesystem root)
         localbuild_root_path = local_shared_folder
         if not os.path.exists(localbuild_root_path):
             os.mkdir(localbuild_root_path)
-        localbuild_root_path = os.path.abspath(localbuild_root_path)
+        localbuild_root_path = os.path.abspath(localbuild_root_path) + '/'
 
     # If the user provides the instruction file but not the local adress of the environment,
     #  he does not want to replicate the env (she thinks it is already in place)
@@ -77,13 +80,14 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
     fs_locations = {
         "build_root" : localbuild_root_path, 
         "runtime_root" : runtime_root_path, 
-        "build_shared" : localbuild_root_path + "shared/", 
-        "runtime_shared" : runtime_root_path + "shared/",
-        "build_exec" : localbuild_root_path + "exec/",
-        "runtime_exec" : runtime_root_path+ "exec/"
+        "build_shared" : localbuild_root_path + "shared_contents/", 
+        "runtime_shared" : runtime_root_path + "shared_contents/",
+        "build_exec" : localbuild_root_path + "exec_dir/",
+        "runtime_exec" : runtime_root_path+ "exec_dir/",
         "build_work" : localbuild_root_path + batch_job_code + "/",
         "runtime_work" : runtime_root_path + batch_job_code + "/"
     }
+    print(fs_locations)
 
     # Step 1: create local versions of Shared, Exec and Work sub-environments ------------------------
     # Create main locations locally
@@ -94,12 +98,6 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         os.mkdir(fs_locations["build_exec"])
     if not os.path.exists(fs_locations["build_work"]):
         os.mkdir(fs_locations["build_work"])
-    if protocol == 'remote' and not env_and_do_not_replicate:
-        check_remote_path(remote_machine, fs_locations["runtime_root"]
-        p = subprocess.Popen(
-            ["scp", "-r", fs_locations["build_root"], remote_machine+":"+fs_locations["runtime_root"]],
-            stderr=devnull, stdout=devnull)
-        p.wait()
         
     exec_filesystem = {}  # For each task contains remote work path and shared files paths
     shared = {}
@@ -127,6 +125,27 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
                 runtime_shdest_path = shared[skey]
             exec_filesystem[jd['unique_code']][1]["<shared>"+skey] = runtime_shdest_path
 
+    if protocol == 'remote' and not env_and_do_not_replicate:
+        check_remote_path(remote_machine, fs_locations["runtime_root"])
+        if env_instr:
+            p = subprocess.Popen(
+                ["scp", "-r", fs_locations["build_root"], remote_machine+":"+fs_locations["runtime_root"]],
+                stderr=devnull, stdout=devnull)
+            p.wait()
+        else:
+            p = subprocess.Popen(
+                ["ssh", remote_machine, "mkdir", fs_locations["runtime_root"]],
+                stderr=devnull, stdout=devnull)
+            p.wait()
+            p = subprocess.Popen(
+                ["ssh", remote_machine, "mkdir", fs_locations["runtime_exec"]],
+                stderr=devnull, stdout=devnull)
+            p.wait()
+            p = subprocess.Popen(
+                ["scp", "-r", fs_locations["build_shared"], remote_machine+":"+fs_locations["runtime_shared"]],
+                stderr=devnull, stdout=devnull)
+            p.wait()
+
     # Step 3: create Work sub-filesystem: "custom" or "locusts" mode -------------------
     if env_instr:  # "custom" mode: environment is created following instruction file
         # Replace tags in instruction file lines
@@ -134,31 +153,51 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         if protocol == "remote":
             mkdircmd = "ssh {0} mkdir".format(remote_machine)
             copycmd = "scp"
-            runtime_envroot_cp = "{0}:{1}".format(remote_machine, runtime_root_path)
-            runtime_envroot_mkdir = runtime_root_path
-        elif protocol !- 'remote-sharedfs':
+            runtime_envroot_cp = "{0}:{1}".format(remote_machine, fs_locations["runtime_work"])
+            runtime_envroot_mkdir = fs_locations["runtime_work"]
+            workpath = fs_locations["runtime_work"]
+        elif protocol == 'remote-sharedfs':
             mkdircmd, copycmd = "mkdir", "cp"
-            runtime_envroot_cp = runtime_root_path
-            runtime_envroot_mkdir = runtime_root_path
+            runtime_envroot_cp = fs_locations["runtime_work"]
+            runtime_envroot_mkdir = fs_locations["runtime_work"]
+            workpath = fs_locations["runtime_work"]
+        elif protocol == "local":
+            workpath = build_envroot
 
         #  Read the instruction file, replace tags and execute
+        workdir, instructions = parse_fs_tree(env_instr, build_envroot)
+        if protocol != 'local' and not env_and_do_not_replicate:
+            for instr in instructions:
+                cmd = instr.replace("<build_envroot>", build_envroot) \
+                    .replace("<mkdir>", mkdircmd) \
+                    .replace("<runtime_envroot_mkdir>", runtime_envroot_mkdir) \
+                    .replace("<copy>", copycmd) \
+                    .replace("<runtime_envroot_cp>", runtime_envroot_cp)
+                cmdlist = [x for x in cmd.split() if x]
+                p = subprocess.Popen(cmdlist, stdout=devnull, stderr=devnull)
+                p.wait()
+
+        '''
         workdir = ""
         with open(env_instr) as instrf:
             for line in instrf:
                 if not line.strip():
                     continue
                 if line.startswith("#WORKDIR"):
-                    workdir = runtime_root_path + line.split()[1]
+                    workdir = workpath + line.split(":")[1].strip()
+                    continue
                 if protocol != 'local' and not env_and_do_not_replicate:
-                    cmd = line.replace("<build_envroot>", build_envroot)
-                        .replace("<mkdir>", mkdircmd)
-                        .replace("<runtime_envroot_mkdir>", runtime_envroot_mkdir)
-                        .replace("<copy>", copycmd)
+                    cmd = line.replace("<build_envroot>", build_envroot) \
+                        .replace("<mkdir>", mkdircmd) \
+                        .replace("<runtime_envroot_mkdir>", runtime_envroot_mkdir) \
+                        .replace("<copy>", copycmd) \
                         .replace("<runtime_envroot_cp>", runtime_envroot_cp)
                     cmdlist = [x for x in cmd.split() if x]
 
                     p = subprocess.Popen(cmdlist, stdout=devnull, stderr=devnull)
                     p.wait()
+        '''
+
         if not workdir:
             print(("ERROR (generate_filesystem): Please specify the directory "
                 "from where to launch the specified commands\nOn top of the "
@@ -170,36 +209,44 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         #  A cache in the main Work folder is created for containing them
         build_cache = fs_locations["build_work"] + '.cache/'
         runtime_cache = fs_locations["runtime_work"] + '.cache/'
+        if os.path.exists(build_cache):
+            shutil.rmtree(build_cache)
+        os.mkdir(build_cache)
         build_task_dir = build_cache + 'tasks/'
         runtime_task_dir = runtime_cache + 'tasks/'
+        os.mkdir(build_task_dir)
         for jdi, jd in enumerate(job_data):
             batchno = jdi // 10000
 
             # Create local task folders and copy clean env files
+            print(jd)
+
             build_batch_folder = build_task_dir + 'batch_' + str(batchno) + '/'
             if not os.path.exists(build_batch_folder):
                 os.mkdir(build_batch_folder)
             runtime_batch_folder = runtime_task_dir + 'batch_' + str(batchno) + '/'
             build_task_path = build_batch_folder + 'task_' + jd['unique_code'] + '.sh'
             runtime_task_path = runtime_batch_folder + 'task_' + jd['unique_code'] + '.sh'
-            exec_filesystem[jd['unique_code']] = (runtime_batch_folder, os.path.basename(runtime_task_path))
+            exec_filesystem[jd['unique_code']][0] = (runtime_batch_folder, os.path.basename(runtime_task_path))
 
             # There, create individual task files
             #  Correctly indent the command, writes it in task.sh and gives it exe privileges
             new_command = beautify_bash_oneliner(
                 "cd {0}; ".format(workdir) + jd['command'], 
                 replacements=exec_filesystem[jd['unique_code']][1])
+            print("cd {0}; ".format(workdir) + jd['command'])
+            print(new_command)
             with open(build_task_path, "w") as tf:
                 tf.write(new_command)
             subprocess.call(["chmod", "777", build_task_path])
 
         # This new cache has to be copied remotely, in a separate way
         if protocol == 'remote':
-            check_remote_path(remote_machine, fs_locations["runtime_root"])
             p = subprocess.Popen(
                 ["scp", "-r", build_cache, remote_machine+":"+runtime_cache],
                 stderr=devnull, stdout=devnull)
             p.wait()
+            
 
     else:  # "locusts" mode: optimized environment for parallel and safe execution
     
@@ -238,15 +285,12 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             exec_filesystem[jd['unique_code']][0] = (rem_jf, "task.sh")
     
         if protocol == "remote":
-            # Check remote path
-            check_remote_path(remote_machine, root_path)
-    
-            # Transfers local temporary filesystem in the remote location
+            # Transfer local temporary filesystem in the remote location
             p = subprocess.Popen(
                 ["scp", "-r", fs_locations["build_work"], remote_machine+":"+fs_locations["runtime_work"]],
                 stderr=devnull, stdout=devnull)
             p.wait()
-    
+
     return {k : exec_filesystem[k][0] for k in exec_filesystem}, fs_locations
 
 
@@ -304,16 +348,14 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
         # Compile using the template (so far, only supports SLURM)
         with open(template_filename) as tempf:
             text = tempf.read()
-        text = (
-            text.replace('<jobd>', batch_job_code)
-            .replace('<jobid>', str(jobid).zfill(3))
-            .replace('<cpuspertask>', str(cpus_per_node))
-            .replace('<outpath>', outpath)
-            .replace('<errpath>', errpath)
-            .replace('<taskfile>', task_filename)
-            .replace('<exedir>', fs_locations["runtime_exec"])
+        text = text.replace('<jobd>', batch_job_code) \
+            .replace('<jobid>', str(jobid).zfill(3)) \
+            .replace('<cpuspertask>', str(cpus_per_node)) \
+            .replace('<outpath>', outpath) \
+            .replace('<errpath>', errpath) \
+            .replace('<taskfile>', task_filename) \
+            .replace('<exedir>', fs_locations["runtime_exec"]) \
             .replace('<partition>', partition)
-        )
 
         # Write manager file and give it exe privilege
         manager_filename = (
@@ -326,14 +368,14 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
 
         # Write task file: the file containing the adresses of the clean env folders
         #  the manager has to deal with
-        task_filename = (fs_locations["build_exec"]
-            'taskfile_{0}{1}.txt').format(batch_job_code, str(jobid).zfill(3))
+        task_filename = (fs_locations["build_exec"] \
+            + 'taskfile_{0}{1}.txt').format(batch_job_code, str(jobid).zfill(3))
         
         with open(task_filename, 'w') as tf:
             tf.write('\n'.join(
                 [(x + '\t' + task_folders[x][0] + '\t' + task_folders[x][1]) 
                 for x in taskid_list[ik:ik+tasks_per_node]]
-            ))
+            ) + '\n')
      
         # Job manager identifier and associated tasks
         tasks_per_job.append((jobid, taskid_list[ik:ik+tasks_per_node]))
@@ -348,9 +390,9 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
         p.wait()
 
         # Remove the local root directory
-        p = subprocess.Popen(
-            ["rm", "-rf", fs_locations["build_root"]],
-            stderr=devnull, stdout=devnull)
+#        p = subprocess.Popen(
+#            ["rm", "-rf", fs_locations["build_root"]],
+#            stderr=devnull, stdout=devnull)
         p.wait()
 
         rmhidden_cmd = ["ssh", remote_machine, "rm", fs_locations["runtime_exec"]+".*"]
@@ -386,7 +428,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                     "ssh", 
                     remote_machine, 
                     "sbatch", 
-                    fs_locations["runtime_exec"] + 'manager_{0}{1}.slurm'
+                    fs_locations["runtime_exec"] + 'manager_{0}{1}.slurm' \
                         .format(batch_job_code, str(job_id).zfill(3))
                 ],
                 stderr=devnull,
@@ -446,9 +488,12 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
             else:
                 is_over = False
                 print("Job", job_id, "pending")
+                # Check if processes are scehduled. For this you need the job IDs given by the machine...
+#                if protocol == 'remote':
+#                    isitthere_cmd = ["ssh", remote_machine, "squeue", "-u"]
     print("Jobs are over")
 
-# ARRIVATO QUI MODIFICA GATHER E POI TESTA
+
 def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_folders,
         fs_locations, tasks_per_job, log_dir, analysis_func=None, build_envroot=None, 
         snapshot=None, noenvrm=False):
@@ -478,7 +523,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
         # Check whether any of the task results still pending (not executed)
         #  or running (might have been interrupted). If so, adds to the reschedule set
         sname = "status_{0}{1}".format(batch_job_code, str(job_id).zfill(3))
-        status_filename = main_exec_dir + fs_locations["exe_dir"] + sname
+        status_filename = fs_locations["runtime_exec"] + sname
         grep_pending_cmd = ["grep", "'pending'", status_filename]
         if remote_machine:
             grep_pending_cmd = ["ssh", remote_machine] + grep_pending_cmd
@@ -500,6 +545,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
 
     # For the jobs that have completed, checks the expected outputs
     if not build_envroot:
+        print("UNO")
         completed_with_error = set()
         output_paths = {}
         for jd in job_data:
@@ -562,16 +608,18 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
             for k in job_data if k['unique_code'] in reschedule }
     
     elif snapshot:
-        new_snapshot = take_snapshot(protocol_triad, fs_locations["runtime_root"])
+        print("DUE")
+        new_snapshot = take_snapshot(protocol_triad, build_envroot)
         newly_added = compare_snapshots(snapshot, new_snapshot)
         snap_log = log_dir + 'modified.log'
         with open(snap_log, 'w') as snapf:
             # Creates all new folders
             for d in sorted(newly_added):
-                snapf.write("Directory created: {0}\n".format(build_envroot+d))
-                if protocol != 'local':
-                    if not os.path.exists(build_envroot+d):
-                        os.mkdir(build_envroot+d)
+                if not newly_added[d]:
+                    snapf.write("Directory created: {0}\n".format(build_envroot+d))
+                    if protocol != 'local':
+                        if not os.path.exists(build_envroot+d):
+                            os.mkdir(build_envroot+d)
 
             # Populates new and old folders
             for d in sorted(newly_added):
@@ -583,6 +631,8 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
                         p = subprocess.Popen(cpcmd, stdout=devnull, stderr=devnull)
                         p.wait()
 
+        output_d, output_paths, completed_with_error = {}, None, None
+
     # Remove all repositories
     if not noenvrm:
         if protocol != 'local':
@@ -592,7 +642,6 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
         rm_cmd = ["rm", "-rf", fs_locations['build_root']]
         p = subprocess.Popen(rm_cmd, stderr=devnull, stdout=devnull)
         p.wait()
-        output_paths, completed_with_error = None, None
 
     return output_d, output_paths, completed_with_error
 
@@ -606,22 +655,25 @@ def take_snapshot(protocol_triad, root_dir):
 
     textlines = subprocess.Popen(lsrcmd, 
         stdout=subprocess.PIPE, stderr=devnull).stdout.readlines()
-    for line in textlines:
+
+    snapshot = {}
+    for l in textlines:
+        line = l.decode('ascii')
         if not line.strip() or line.startswith('total'):
             continue
         if len(line.split()) == 1:
             dirname = line.strip()[:-1]  # line terminates with ":"
             snapshot[dirname] = {}
-        elif en(line.split()) == 9:
+        elif len(line.split()) == 9:
             priv, _, usr1, usr2, s, d1, d2, d3, filename = line.split() 
             if priv.startswith('-'):  # If item is not a folder
                 snapshot[dirname][filename] = (priv, usr1, usr2, s, d1, d2, d3)
         else:
             print(("WARNING (take_snapshot): output of ls -ltrhR is not"
-                "in the expected format")
+                "in the expected format"))
             print(line)
 
-     return snapshot
+    return snapshot
 
 
 def compare_snapshots(snap1, snap2):
@@ -684,6 +736,11 @@ def highly_parallel_job_manager(options, exec_filename,
                     'shared_inps' : []
                 }
                 jd['command'] = line[8:].strip()
+                fields = line.split()
+                jd['output_dir'] = locout_dir
+                jd['unique_code'] = batch_job_code + fields[0][1:-1]
+                jd['log_filename'] = (log_dir + batch_job_code +
+                    fields[0][1:-1] + '_log.txt')
             elif line.startswith("i"):
                 fields = line.split()
                 jd['clean_env_inps'] = fields[1:]
@@ -694,10 +751,6 @@ def highly_parallel_job_manager(options, exec_filename,
             elif line.startswith("o"):
                 fields = line.split()
                 jd['outputs'] = fields[1:]
-                jd['output_dir'] = output_dir
-                jd['unique_code'] = batch_job_code + fields[0][1:-1]
-                jd['log_filename'] = (log_dir + batch_job_code + 
-                    fields[0][1:-1] + '_log.txt')
         if jd:
             if os.path.exists(jd['log_filename']):
                 if options['force_redo']:
@@ -729,13 +782,14 @@ def highly_parallel_job_manager(options, exec_filename,
         local_shared_folder = None
         requested_nodes = 1
         cpus_per_node = options['number_of_processors']
-        runtime_root_path = cache_dir + batch_job_code + "_tmp_exec_path/"
+        runtime_root_path = cache_dir + batch_job_code + "_tmp_root/"
         if not os.path.exists(runtime_root_path):
             os.mkdir(runtime_root_path)
     protocol_triad = (protocol, remote_machine, local_shared_folder)
 
     completed_with_error = set()
     output_paths = {}
+    env_root_dir = os.path.abspath(env_root_dir) + '/'
     gen_env_root_dir = None if noenvcp else env_root_dir
     while job_data:
         # Create the hosting file system
@@ -763,10 +817,11 @@ def highly_parallel_job_manager(options, exec_filename,
         if env_instr:
             snapshot = take_snapshot(
                 protocol_triad, 
-                fs_locations["runtime_root"]
+                env_root_dir
             )
         else:
             snapshot = {}
+
 
         # Create extrenal master script that checks out from time to time (each 5 mins or so)
         # This step is over only when no process is active anymore
@@ -793,6 +848,8 @@ def highly_parallel_job_manager(options, exec_filename,
             build_envroot=env_root_dir,
             snapshot=snapshot
         )
-        completed_with_error |= witherr
-        for x in outp:
-            output_paths[x] = outp[x]
+        if witherr:
+            completed_with_error |= witherr
+        if outp:
+            for x in outp:
+                output_paths[x] = outp[x]

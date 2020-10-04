@@ -1,5 +1,4 @@
 from locusts.manager import *
-from locusts.environment import *
 
 def define_options():
     """Initializes the options data structure with its default values.
@@ -19,7 +18,7 @@ def define_options():
     return options
 
 
-def parse_parameter_file(parf)
+def parse_parameter_file(parf):
     """Parses the parameter file and compiles the options dictionary"""
 
     if not os.path.exists(parf):
@@ -103,7 +102,7 @@ def compile_id_list(indir, spcins):
 
 
 def create_exec_file(env_type, command_template, exec_filename, data):
-    def replace_args(arglist, string):
+    def replace_args(string, arglist):
         nargs = len(arglist)
         for i in range(nargs):
             string = string.replace("<arg{0}>".format(i), arglist[i])
@@ -190,7 +189,7 @@ def launch(indir=None, outdir=None, code=None, spcins=None, shdins=None, locdir=
         exit(1)
     # Check 4 args of Locusts Env
     if (indir and outdir and spcins and outs):
-        execfile_dir = outdir
+        execfile_dir = reduceslash(outdir + "/")
         if not args:
             print("Running Locusts Environment")
             env_type = "locusts"
@@ -218,9 +217,9 @@ def launch(indir=None, outdir=None, code=None, spcins=None, shdins=None, locdir=
     # Check 3 args of Custom Env
     elif (args and envroot and envfs and locdir):
         env_type = "custom"
-        execfile_dir = reducetabs(envroot + "/")
-        env_instr_filename = execfile_dir + code + ".env_instr_file.txt"
-        parse_fs_tree(envfs, envroot, env_instr_filename)
+        execfile_dir = reduceslash(locdir + "/")
+        env_instr_filename = envfs
+#        parse_fs_tree(envfs, envroot)
         data = args
         print("Running Custom Environment")
         print("Warning: Locusts will not perform quality checks on runs")
@@ -228,7 +227,7 @@ def launch(indir=None, outdir=None, code=None, spcins=None, shdins=None, locdir=
     else:
         print(("ERROR (launch): Please specify one of the two sets of"
             "arguments:\nindir # Input directory\noutdir # Output directory\n"
-            "spcins # Specific inputs\nouts # Expected outputs\n\n\or\n\n"
+            "spcins # Specific inputs\nouts # Expected outputs\n\nor\n\n"
             "args # Argument list\nenvroot # Environment root directory\n"
             "envf # Environment filesystem specification file\nlocdir # Local "
             "path to store caches and build the filesystem"))

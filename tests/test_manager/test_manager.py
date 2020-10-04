@@ -1,4 +1,4 @@
-import locusts.manager
+import locusts.swarm
 
 def test_managers():
     my_input_dir = "tests/test_manager/my_input_dir/"  # The path of the directory containing the inputs
@@ -17,7 +17,7 @@ def test_managers():
         'ls_output_<id>.txt',
         'cat_output_<id>.txt')
 
-    locusts.manager.launch(
+    locusts.swarm.launch(
         indir=my_input_dir,
         outdir=my_output_dir,
         code=batch_job_code,
@@ -25,7 +25,7 @@ def test_managers():
         shdins=shared_inputs,
         outs=outputs,
         cmd=command_template,
-        optf=parameter_file
+        parf=parameter_file
     )
 
 

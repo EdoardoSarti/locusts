@@ -64,8 +64,9 @@ do
 		then
 			task_id=`awk -v i=${i} 'NR==i{print $1}' <taskfile>`
 			clean_dir=`awk -v i=${i} 'NR==i{print $2}' <taskfile>`
+                        tasksh=`awk -v i=${i} 'NR==i{print $3}' <taskfile>`
 			# Wrap task in a new terminal
-			(echo "${i} ${task_id} running ${clean_dir}" >> <exedir>/.runningjobs_<jobd><jobid>.txt; cd ${clean_dir}; bash task.sh; echo "${i} ${task_id} done ${clean_dir}" >> <exedir>/.donejobs_<jobd><jobid>.txt) &
+			(echo "${i} ${task_id} running ${clean_dir}" >> <exedir>/.runningjobs_<jobd><jobid>.txt; cd ${clean_dir}; bash ${tasksh}; echo "${i} ${task_id} done ${clean_dir}" >> <exedir>/.donejobs_<jobd><jobid>.txt) &
 			((NLAUNCHED++))
 		fi
 	done

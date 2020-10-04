@@ -1,5 +1,6 @@
 /build/
 /tests/test_manager/my_input_dir/*
 /tests/test_manager/my_output_dir/*
+tests/test_customenv/my_local_dir/*
 /dist/
 /tmp/
