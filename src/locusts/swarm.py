@@ -15,6 +15,7 @@ def define_options():
     options['number_of_processors'], options['TYPES']['number_of_processors'] = 1, int
     options['force_redo'], options['TYPES']['force_redo'] = False, bool
     options['singularity'], options['TYPES']['singularity'] = None, str
+    options['singularity_container'], options['TYPES']['singularity_container'] = None, str
     options['singularity_modload'], options['TYPES']['singularity_modload'] = None, str
 
     return options

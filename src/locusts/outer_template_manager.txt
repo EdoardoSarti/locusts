@@ -27,4 +27,6 @@
 
 <singularity_module_load>
 
-<singularity>bash inner_manager.slurm
+export SINGULARITY_BINDPATH="<main_path>"
+
+<singularity_command>bash <exedir>/<inner_manager>

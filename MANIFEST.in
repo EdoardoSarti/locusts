@@ -1,1 +1,2 @@
-include src/locusts/template_manager.txt
+include src/locusts/outer_template_manager.txt
+include src/locusts/inner_template_manager.txt

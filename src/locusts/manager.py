@@ -280,7 +280,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             subprocess.call(["chmod", "777", task_filename])
 
             # Runtime paths for task folders
-            rem_jf = (fs_locations["runtime_work"] + batch_job_code + '/' + 'batch_'
+            rem_jf = (fs_locations["runtime_work"] + 'batch_'
                     + str(batchno) + '/' + 'task_' + jd['unique_code'] + '/')
             exec_filesystem[jd['unique_code']][0] = (rem_jf, "task.sh")
     
@@ -296,7 +296,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
 
 def create_manager_scripts(protocol_triad, cache_dir, task_folders,
         cpus_per_node, requested_nodes, batch_job_code, fs_locations, 
-        singinfo=(None, None), task_cd=None):
+        singinfo=(None, None, None), task_cd=None):
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
@@ -307,7 +307,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
 
     # Is there singularity? Does it use a module?
     if singinfo[0]:
-        singularitypath, singmodload = singinfo
+        singularitypath, singularitycont, singmodload = singinfo
 
     # List of task ids
     taskid_list = sorted([k for k in task_folders])
@@ -364,13 +364,15 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
                 .replace('<taskfile>', task_filename) \
                 .replace('<exedir>', fs_locations["runtime_exec"]) \
                 .replace('<partition>', partition) \
+                .replace('<main_path>', fs_locations["runtime_root"]) \
                 .replace('<singularity_module_load>', singmodload) \
-                .replace('<singularity>', singularitypath)
+                .replace('<singularity_command>', "{0} exec {1} ".format(singularitypath, singularitycont)) \
+                .replace('<inner_manager>', "inner_manager_{0}{1}.slurm".format(batch_job_code, str(jobid).zfill(3)))
 
             # Write manager file and give it exe privilege
             manager_filename = (
                 fs_locations["build_exec"] + prefmng
-                'manager_{0}{1}.slurm'.format(batch_job_code, str(jobid).zfill(3))
+                + 'manager_{0}{1}.slurm'.format(batch_job_code, str(jobid).zfill(3))
             )
             with open(manager_filename, 'w') as mf:
                 mf.write(text)
@@ -722,7 +724,7 @@ def highly_parallel_job_manager(options, exec_filename,
     os.mkdir(log_dir)
 
     # Is there singularity?
-    singinfo = (options['singularity'], options['singularity_modload'])
+    singinfo = (options['singularity'], options['singularity_container'], options['singularity_modload'])
 
     # Read exec file and compile job_data
     job_data = []
@@ -802,8 +804,12 @@ def highly_parallel_job_manager(options, exec_filename,
 
     completed_with_error = set()
     output_paths = {}
-    env_root_dir = os.path.abspath(env_root_dir) + '/'
-    gen_env_root_dir = None if noenvcp else env_root_dir
+    if env_root_dir:
+        env_root_dir = os.path.abspath(env_root_dir) + '/'
+        gen_env_root_dir = None if noenvcp else env_root_dir
+    else:
+        env_root_dir, gen_env_root_dir = None, None
+
     while job_data:
         # Create the hosting file system
         task_folders, fs_locations = generate_exec_filesystem(

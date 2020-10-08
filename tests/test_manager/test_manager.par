@@ -12,5 +12,6 @@ local_shared_dir				# Do the HPC service and the local machine share a directory
 number_of_processors	4			# Number of processors to use on the local machine
 
 ### Singularity
-singularity		/usr/local/current/singularity/3.5.3/bin/singularity
+singularity		singularity
+singularity_container	/data/sartie/Ubuntu1804-EncoMPASS.sif 
 singularity_modload	module load singularity
