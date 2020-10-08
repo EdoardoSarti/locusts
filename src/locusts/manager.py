@@ -62,7 +62,6 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         localbuild_root_path = reduceslash(cache_dir + "/" + batch_job_code + "_tmp_root/")
         if not os.path.exists(localbuild_root_path):
             os.mkdir(localbuild_root_path)
-            print("mkdir", localbuild_root_path)
         localbuild_root_path = os.path.abspath(localbuild_root_path) + '/'
     elif protocol == "remote-sharedfs":
         # localbuild_root_path <- local shared folder (real filesystem root)
@@ -87,7 +86,6 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         "build_work" : localbuild_root_path + batch_job_code + "/",
         "runtime_work" : runtime_root_path + batch_job_code + "/"
     }
-    print(fs_locations)
 
     # Step 1: create local versions of Shared, Exec and Work sub-environments ------------------------
     # Create main locations locally
@@ -219,8 +217,6 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             batchno = jdi // 10000
 
             # Create local task folders and copy clean env files
-            print(jd)
-
             build_batch_folder = build_task_dir + 'batch_' + str(batchno) + '/'
             if not os.path.exists(build_batch_folder):
                 os.mkdir(build_batch_folder)
@@ -234,7 +230,6 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             new_command = beautify_bash_oneliner(
                 "cd {0}; ".format(workdir) + jd['command'], 
                 replacements=exec_filesystem[jd['unique_code']][1])
-            print("cd {0}; ".format(workdir) + jd['command'])
             print(new_command)
             with open(build_task_path, "w") as tf:
                 tf.write(new_command)
@@ -491,7 +486,6 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 local_time = int(local_time_l[0])*60 + int(local_time_l[1])
                 coeff = (local_time - touch_time)%(24*60)
                 is_active = False if coeff > 1 else True
-                print(touch_time, local_time)
                 if is_active:
                     is_over = False
                     print("Job", job_id, "running")
@@ -557,7 +551,6 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
 
     # For the jobs that have completed, checks the expected outputs
     if not build_envroot:
-        print("UNO")
         completed_with_error = set()
         output_paths = {}
         for jd in job_data:
@@ -620,7 +613,6 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
             for k in job_data if k['unique_code'] in reschedule }
     
     elif snapshot:
-        print("DUE")
         new_snapshot = take_snapshot(protocol_triad, build_envroot)
         newly_added = compare_snapshots(snapshot, new_snapshot)
         snap_log = log_dir + 'modified.log'
