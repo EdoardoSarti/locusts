@@ -14,6 +14,8 @@ def define_options():
     options['hpc_exec_dir'], options['TYPES']['hpc_exec_dir'] = None, str
     options['number_of_processors'], options['TYPES']['number_of_processors'] = 1, int
     options['force_redo'], options['TYPES']['force_redo'] = False, bool
+    options['singularity'], options['TYPES']['singularity'] = None, str
+    options['singularity_modload'], options['TYPES']['singularity_modload'] = None, str
 
     return options
 

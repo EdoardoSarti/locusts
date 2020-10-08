@@ -1,0 +1,53 @@
+#!/bin/bash
+
+touch <exedir>/.manager_activity_check_<jobd><jobid>
+
+N=`wc <taskfile> | awk '{print $1}'`
+for ((i=1;i<=N;i++))
+do
+	task_id=`awk -v i=${i} 'NR==i{print $1}' <taskfile>`
+	clean_dir=`awk -v i=${i} 'NR==i{print $2}' <taskfile>`
+	echo "${i} ${task_id} pending ${clean_dir}"
+done > <exedir>/status_<jobd><jobid>.txt
+
+not_done="TRUE"
+while [[ "${not_done}" == "TRUE" ]]
+do
+	# Placeholder file for confirming whether this manager script is running or had unexpected issues
+	touch <exedir>/.manager_activity_check_<jobd><jobid>
+
+	# Check how many running tasks are there
+	cat <exedir>/.runningjobs_<jobd><jobid>.txt <exedir>/.donejobs_<jobd><jobid>.txt | awk '{a[$2]=$0}END{for (i in a) {print a[i]}}' | grep "running" | sort -nk1 > <exedir>/.currentlyrunning_<jobd><jobid>.txt
+	NBUSY=`wc <exedir>/.currentlyrunning_<jobd><jobid>.txt | awk '{print $1}'`
+
+	# Check how many new tasks can be lauched
+	NLAUNCHES=$((<cpuspertask> - NBUSY))
+	NLAUNCHED=0
+
+	# Go through the status file and launch the first NLAUNCHES new tasks
+	for ((i=1;i<=N;i++))
+	do
+		# Determine status of the i-th task
+		stat=`awk -v i=${i} 'NR==i{print $3}' <exedir>/status_<jobd><jobid>.txt`
+		# If its status is pending and if there still are tasks to launch, do it
+		if [[ "${stat}" == "pending" && "${NLAUNCHED}" != "${NLAUNCHES}" ]]
+		then
+			task_id=`awk -v i=${i} 'NR==i{print $1}' <taskfile>`
+			clean_dir=`awk -v i=${i} 'NR==i{print $2}' <taskfile>`
+                        tasksh=`awk -v i=${i} 'NR==i{print $3}' <taskfile>`
+			# Wrap task in a new terminal
+			(echo "${i} ${task_id} running ${clean_dir}" >> <exedir>/.runningjobs_<jobd><jobid>.txt; cd ${clean_dir}; bash ${tasksh}; echo "${i} ${task_id} done ${clean_dir}" >> <exedir>/.donejobs_<jobd><jobid>.txt) &
+			((NLAUNCHED++))
+		fi
+	done
+
+	sleep 10
+	# Update the status file
+	cat <exedir>/status_<jobd><jobid>.txt <exedir>/.runningjobs_<jobd><jobid>.txt <exedir>/.donejobs_<jobd><jobid>.txt | awk '{a[$1]=$0}END{for (i in a) {print a[i]}}' | sort -nk1 > <exedir>/.status_<jobd><jobid>.tmp.txt
+	mv <exedir>/.status_<jobd><jobid>.tmp.txt <exedir>/status_<jobd><jobid>.txt
+
+	# Check if there is still something to do
+	not_done=`awk 'BEGIN{flag=0} $3!="done"&&flag==0{print "TRUE"; flag=1}END{if (flag==0) {print "FALSE"}}' <exedir>/status_<jobd><jobid>.txt`
+done
+
+touch <exedir>/.manager_activity_check_<jobd><jobid>

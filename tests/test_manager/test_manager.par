@@ -10,3 +10,7 @@ local_shared_dir				# Do the HPC service and the local machine share a directory
 
 ### Local multithreading
 number_of_processors	4			# Number of processors to use on the local machine
+
+### Singularity
+singularity		/usr/local/current/singularity/3.5.3/bin/singularity
+singularity_modload	module load singularity

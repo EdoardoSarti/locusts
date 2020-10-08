@@ -295,13 +295,19 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
 
 
 def create_manager_scripts(protocol_triad, cache_dir, task_folders,
-        cpus_per_node, requested_nodes, batch_job_code, fs_locations, task_cd=None):
+        cpus_per_node, requested_nodes, batch_job_code, fs_locations, 
+        singinfo=(None, None), task_cd=None):
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
 
     # The location of the template file for the 1-node-manager script
-    template_filename = os.path.dirname(os.path.realpath(__file__)) + '/template_manager.txt'
+    outer_template_filename = os.path.dirname(os.path.realpath(__file__)) + '/outer_template_manager.txt'
+    inner_template_filename = os.path.dirname(os.path.realpath(__file__)) + '/inner_template_manager.txt'
+
+    # Is there singularity? Does it use a module?
+    if singinfo[0]:
+        singularitypath, singmodload = singinfo
 
     # List of task ids
     taskid_list = sorted([k for k in task_folders])
@@ -345,26 +351,30 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
         errpath = fs_locations["runtime_exec"] + '{0}.err.txt'.format(tfname)
         partition = 'norm' if requested_nodes < 10 else 'multinode'
 
-        # Compile using the template (so far, only supports SLURM)
-        with open(template_filename) as tempf:
-            text = tempf.read()
-        text = text.replace('<jobd>', batch_job_code) \
-            .replace('<jobid>', str(jobid).zfill(3)) \
-            .replace('<cpuspertask>', str(cpus_per_node)) \
-            .replace('<outpath>', outpath) \
-            .replace('<errpath>', errpath) \
-            .replace('<taskfile>', task_filename) \
-            .replace('<exedir>', fs_locations["runtime_exec"]) \
-            .replace('<partition>', partition)
+        # Compiles outer manager (with the SLURM keywords and possibly singularity) and inner manager (the core manager itself)
+        for prefmng, template_filename in [('outer_', outer_template_filename), ('inner_', inner_template_filename)]:
+            # Compile using the template 
+            with open(template_filename) as tempf:
+                text = tempf.read()
+            text = text.replace('<jobd>', batch_job_code) \
+                .replace('<jobid>', str(jobid).zfill(3)) \
+                .replace('<cpuspertask>', str(cpus_per_node)) \
+                .replace('<outpath>', outpath) \
+                .replace('<errpath>', errpath) \
+                .replace('<taskfile>', task_filename) \
+                .replace('<exedir>', fs_locations["runtime_exec"]) \
+                .replace('<partition>', partition) \
+                .replace('<singularity_module_load>', singmodload) \
+                .replace('<singularity>', singularitypath)
 
-        # Write manager file and give it exe privilege
-        manager_filename = (
-            fs_locations["build_exec"] 
-            + 'manager_{0}{1}.slurm'.format(batch_job_code, str(jobid).zfill(3))
-        )
-        with open(manager_filename, 'w') as mf:
-            mf.write(text)
-        subprocess.call(["chmod", "777", manager_filename])
+            # Write manager file and give it exe privilege
+            manager_filename = (
+                fs_locations["build_exec"] + prefmng
+                'manager_{0}{1}.slurm'.format(batch_job_code, str(jobid).zfill(3))
+            )
+            with open(manager_filename, 'w') as mf:
+                mf.write(text)
+            subprocess.call(["chmod", "777", manager_filename])
 
         # Write task file: the file containing the adresses of the clean env folders
         #  the manager has to deal with
@@ -428,7 +438,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                     "ssh", 
                     remote_machine, 
                     "sbatch", 
-                    fs_locations["runtime_exec"] + 'manager_{0}{1}.slurm' \
+                    fs_locations["runtime_exec"] + 'outer_manager_{0}{1}.slurm' \
                         .format(batch_job_code, str(job_id).zfill(3))
                 ],
                 stderr=devnull,
@@ -436,7 +446,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
             )
     else:
         # If no hpc, there is only one node, i.e. one manager
-        mname = 'manager_{0}{1}.slurm'.format(batch_job_code, str(0).zfill(3))
+        mname = 'outer_manager_{0}{1}.slurm'.format(batch_job_code, str(0).zfill(3))
         p = subprocess.Popen(
             ["nohup", fs_locations["runtime_exec"] + mname], 
             stderr=devnull, stdout=devnull
@@ -711,6 +721,9 @@ def highly_parallel_job_manager(options, exec_filename,
         shutil.rmtree(log_dir)
     os.mkdir(log_dir)
 
+    # Is there singularity?
+    singinfo = (options['singularity'], options['singularity_modload'])
+
     # Read exec file and compile job_data
     job_data = []
     jd = {}
@@ -811,7 +824,8 @@ def highly_parallel_job_manager(options, exec_filename,
             cpus_per_node, 
             requested_nodes, 
             batch_job_code, 
-            fs_locations
+            fs_locations,
+            singinfo=singinfo
         )
 
         if env_instr:
