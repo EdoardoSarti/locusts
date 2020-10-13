@@ -509,6 +509,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
 
     # The database is now connected with local machine
     if protocol == 'remote':
+        shutil.rmtree(fs_locations['build_root'])
         scp_cmd = ["scp", "-r", remote_machine+":"+fs_locations['runtime_root'], fs_locations['build_root']]
         p = subprocess.Popen(scp_cmd, stderr=devnull, stdout=devnull)
         p.wait()
@@ -578,7 +579,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
     
                 # Move output from the parsed address to the output folder
                 #  and checks if output is there
-                output_path = (fs_locations["build_root"]
+                output_path = (fs_locations["build_work"]
                     + relative_batch_folder + relative_task_folder + output)
                 if os.path.exists(output_path) and ((analysis_func == None) or
                     (analysis_func(output_path))): 
@@ -588,24 +589,28 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
                         stdout=devnull
                     )
                     p.wait()
-                    output_paths[jd['unique_code']] = output_task_dir
+                    if jd['unique_code'] not in output_paths:
+                        output_paths[jd['unique_code']] = {}
+                    output_paths[jd['unique_code']][output] = output_task_dir + output
                 else:
                     completed_with_error.add(jd['unique_code'])
     
         # Compile the main output file
         output_logfilename = jd['output_dir'] + "output.log"
         with open(output_logfilename, "w") as of:
-            for jid in sorted([k['unique_code'] for k in job_data]):
+            for jid, jd in sorted([(k['unique_code'], k) for k in job_data], key=lambda x: x[0]):
                 if jid in output_paths:
-                    status = "present"
-                    path = output_paths[jid]
-                elif jid in completed_with_error:
-                    status = "error"
-                    path = "-"
-                else:
-                    status = "missing"
-                    path = "-"
-                of.write("{0}\t{1}\n".format(status, path))
+                    for output in jd['outputs']:
+                        if output in output_paths[jid]:
+                            status = "present"
+                            path = output_paths[jid][output]
+                        elif jid in completed_with_error:
+                            status = "error"
+                            path = "-"
+                        else:
+                            status = "missing"
+                            path = "-"
+                of.write("{0}\t{1}\t{2}\n".format(output, status, path))
     
         # This will be the new job_data, containing all jobs that
         #  have to be rescheduled
