@@ -610,7 +610,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
                         else:
                             status = "missing"
                             path = "-"
-                of.write("{0}\t{1}\t{2}\n".format(output, status, path))
+                        of.write("{0}\t{1}\t{2}\n".format(output, status, path))
     
         # This will be the new job_data, containing all jobs that
         #  have to be rescheduled
