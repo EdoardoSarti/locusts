@@ -460,12 +460,18 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 batch_job_code, 
                 str(job_id).zfill(3)
             )
+            macname_sf = "{0}/.manager_activity_check_{1}{2}".format(
+                fs_locations["build_exec"], 
+                batch_job_code, 
+                str(job_id).zfill(3)
+            )
+
             if protocol == 'remote':
                 manager_cmd = ["ssh", remote_machine, "ls", "-latrh", macname]
                 chk_time_cmd = "ssh " + remote_machine + " echo $(date +%H:%M)"
             elif protocol == 'remote-sharedfs':
-                manager_cmd = ["ls", "-latrh", macname]
-                chk_time_cmd = "ssh " + remote_machine + " echo $(date +%H:%M)"
+                manager_cmd = ["ls", "-latrh", macname_sf]
+                chk_time_cmd = "echo $(date +%H:%M)"
             elif protocol == 'local':
                 manager_cmd = ["ls", "-latrh", macname]
                 chk_time_cmd = "echo $(date +%H:%M)"
@@ -492,11 +498,35 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 else:
                     print("Job", job_id, "ended")
             else:
-                is_over = False
-                print("Job", job_id, "pending")
+                is_there = False
                 # Check if processes are scehduled. For this you need the job IDs given by the machine...
-#                if protocol == 'remote':
-#                    isitthere_cmd = ["ssh", remote_machine, "squeue", "-u"]
+                if protocol != 'local':
+                    isitthere_cmd = ["ssh " + remote_machine + ' \'squeue --format="%.18i %.9P %.100j %.8u %.2t %.10M %.6D %R"\'']
+                    isitthere_txt = subprocess.Popen(
+                        isitthere_cmd, 
+                        stderr=devnull, 
+                        stdout=subprocess.PIPE, 
+                        shell=True
+                    ).stdout.read().decode('ascii')
+                    for line in isitthere_txt.split("\n")[1:]:
+                        if not line.strip():
+                            continue
+                        fields = line.split()
+                        if fields[2].strip() == '{0}{1}'.format(batch_job_code, str(job_id).zfill(3)):
+                            print("Job", job_id, "pending")
+                            is_there = True
+                            is_over = False
+                            break
+                    if not is_there:
+                        waitcount[job_id] += 1
+                        if waitcount[job_id] > 3:
+                            print("Job", job_id, "error/aborted")
+                        else:
+                            print("Job", job_id, "waiting...")
+                            is_over = False
+                else:
+                    print("Job", job_id, "error/aborted")
+
     print("Jobs are over")
 
 
