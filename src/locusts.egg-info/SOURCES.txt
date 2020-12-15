@@ -2,13 +2,13 @@ MANIFEST.in
 README.md
 setup.py
 src/locusts/__init__.py
+src/locusts/data_transfer_protocol.sh
 src/locusts/environment.py
 src/locusts/inner_template_manager.txt
 src/locusts/manager.py
 src/locusts/outer_template_manager.txt
 src/locusts/support.py
 src/locusts/swarm.py
-src/locusts/template_manager.txt
 src/locusts.egg-info/PKG-INFO
 src/locusts.egg-info/SOURCES.txt
 src/locusts.egg-info/dependency_links.txt

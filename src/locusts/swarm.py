@@ -17,6 +17,11 @@ def define_options():
     options['singularity'], options['TYPES']['singularity'] = None, str
     options['singularity_container'], options['TYPES']['singularity_container'] = None, str
     options['singularity_modload'], options['TYPES']['singularity_modload'] = None, str
+    options['data_transfer_protocol'], options['TYPES']['data_transfer_protocol'] = os.path.dirname(os.path.realpath(__file__)) + "/data_transfer_protocol.sh", str
+    options['email_address'], options['TYPES']['email_address'] = None, str
+    options['nodewise_scratch_folder'], options['TYPES']['nodewise_scratch_folder'] = None, str
+    options['nodewise_scratch_memory'], options['TYPES']['nodewise_scratch_memory'] = None, str
+    options['walltime'], options['TYPES']['walltime'] = "24:00:00", str
 
     return options
 
@@ -45,8 +50,8 @@ def parse_parameter_file(parf):
                 continue
             fields = line.split()
             if fields[0] not in options:
-                print(("ERROR (launch): {0} ".format(fields[0]),
-                    "is not a valid argument"))
+                print(("ERROR (launch): {0} "
+                    "is not a valid argument").format(fields[0]))
                 exit(1)
 
             # If argument has no value, default value will be chosen

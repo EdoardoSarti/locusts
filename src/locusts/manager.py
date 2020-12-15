@@ -37,7 +37,7 @@ def check_remote_path(remote_machine, root_path):
 
 
 def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_path, batch_job_code, 
-        env_instr=None, build_envroot=None):
+        data_transfer_protocol, env_instr=None, build_envroot=None):
     
     devnull = open('/dev/null', 'w')
 
@@ -127,7 +127,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         check_remote_path(remote_machine, fs_locations["runtime_root"])
         if env_instr:
             p = subprocess.Popen(
-                ["scp", "-r", fs_locations["build_root"], remote_machine+":"+fs_locations["runtime_root"]],
+                ["bash", data_transfer_protocol, fs_locations["build_root"], "{0}:{1}".format(remote_machine, fs_locations["runtime_root"])],
                 stderr=devnull, stdout=devnull)
             p.wait()
         else:
@@ -140,7 +140,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
                 stderr=devnull, stdout=devnull)
             p.wait()
             p = subprocess.Popen(
-                ["scp", "-r", fs_locations["build_shared"], remote_machine+":"+fs_locations["runtime_shared"]],
+                ["bash", data_transfer_protocol, fs_locations["build_shared"], "{0}:{1}".format(remote_machine, fs_locations["runtime_shared"])],
                 stderr=devnull, stdout=devnull)
             p.wait()
 
@@ -150,7 +150,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         #  Choose replacement whether it is in remote or in local
         if protocol == "remote":
             mkdircmd = "ssh {0} mkdir".format(remote_machine)
-            copycmd = "scp"
+            copycmd = "bash {0}".format(data_transfer_protocol)
             runtime_envroot_cp = "{0}:{1}".format(remote_machine, fs_locations["runtime_work"])
             runtime_envroot_mkdir = fs_locations["runtime_work"]
             workpath = fs_locations["runtime_work"]
@@ -230,7 +230,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             new_command = beautify_bash_oneliner(
                 "cd {0}; ".format(workdir) + jd['command'], 
                 replacements=exec_filesystem[jd['unique_code']][1])
-            print(new_command)
+#            print(new_command)
             with open(build_task_path, "w") as tf:
                 tf.write(new_command)
             subprocess.call(["chmod", "777", build_task_path])
@@ -238,7 +238,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         # This new cache has to be copied remotely, in a separate way
         if protocol == 'remote':
             p = subprocess.Popen(
-                ["scp", "-r", build_cache, remote_machine+":"+runtime_cache],
+                ["bash", data_transfer_protocol, build_cache, "{0}:{1}".format(remote_machine, runtime_cache)],
                 stderr=devnull, stdout=devnull)
             p.wait()
             
@@ -282,7 +282,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         if protocol == "remote":
             # Transfer local temporary filesystem in the remote location
             p = subprocess.Popen(
-                ["scp", "-r", fs_locations["build_work"], remote_machine+":"+fs_locations["runtime_work"]],
+                ["bash", data_transfer_protocol, fs_locations["build_work"], "{0}:{1}".format(remote_machine, fs_locations["runtime_work"])],
                 stderr=devnull, stdout=devnull)
             p.wait()
 
@@ -291,10 +291,36 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
 
 def create_manager_scripts(protocol_triad, cache_dir, task_folders,
         cpus_per_node, requested_nodes, batch_job_code, fs_locations, 
-        singinfo=(None, None, None), task_cd=None):
+        data_transfer_protocol, singinfo=(None, None, None), task_cd=None,
+        email_address="", email_type="ALL", tasks_per_core=1,
+        nodescratch_folder="", nodescratch_mem="", walltime="24:00:00"):
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
+
+    # Check consistency of parameters
+    turnon_mailtype, turnon_email_address = "#", "#"
+    if email_address:
+        if "@" not in email_address:
+            print("ERROR (manager): The email address you provided is not valid")
+            print("       "+email_address)
+            exit(1)
+        else: 
+            turnon_mailtype, turnon_email_address = "", ""
+
+    if nodescratch_folder and nodescratch_mem:
+        turnon_nodescratch = ""
+    elif (not nodescratch_folder) and (not nodescratch_mem):
+        turnon_nodescratch = "#"
+    else:
+        print(("ERROR (manager): -nodescratch_folder and -nodescratch_mem options"
+             "must be either both present or absent"))
+        exit(1)
+
+    if len(walltime) < 7 or walltime[-3] != ":" or walltime[-6] != ":":
+        print("ERROR (manager): walltime is not well formatted: XX:XX:XX")
+        print("                 "+walltime)
+        exit(1)
 
     # The location of the template file for the 1-node-manager script
     outer_template_filename = os.path.dirname(os.path.realpath(__file__)) + '/outer_template_manager.txt'
@@ -329,7 +355,9 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
             requested_nodes, 
             len(taskid_list)
         )
-    print("Actual number of nodes used", requested_nodes)
+    print("Protocol used:", protocol)
+    print("Actual number of nodes used:", requested_nodes)
+    print("Each with {0} cpus".format(cpus_per_node))
 
     # Each manager script handles one node
     #  The manager reads a file of adresses where it will find the clean
@@ -351,9 +379,20 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
             # Compile using the template 
             with open(template_filename) as tempf:
                 text = tempf.read()
+
+# jobd, jobid, time, partition, cpuspertask, taskspercore, turnonnodescratch, nodescratchfolder, nodescratchmem, turnonmailtype, mailtype, turnonemailaddress, emailaddress, outpath, errpath, taskfile, exedir
             text = text.replace('<jobd>', batch_job_code) \
                 .replace('<jobid>', str(jobid).zfill(3)) \
+                .replace('<time>', str(walltime)) \
                 .replace('<cpuspertask>', str(cpus_per_node)) \
+                .replace('<taskspercore>', str(tasks_per_core)) \
+                .replace('<turnonnodescratch>', turnon_nodescratch) \
+                .replace('<nodescratchfolder>', nodescratch_folder) \
+                .replace('<nodescratchmem>', nodescratch_mem) \
+                .replace('<turnonmailtype>', turnon_mailtype) \
+                .replace('<mailtype>', mailtype) \
+                .replace('<turnonemailaddress>', turnon_email_address) \
+                .replace('<emailaddress>', email_address) \
                 .replace('<outpath>', outpath) \
                 .replace('<errpath>', errpath) \
                 .replace('<taskfile>', task_filename) \
@@ -391,10 +430,11 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
     if protocol == 'remote':
         # Copy all files in exe dir in the remote counterpart
         filestocopy = [x for x in glob.glob(fs_locations["build_exec"]+"/*")]
-        p = subprocess.Popen(
-            ["scp"] + filestocopy + [remote_machine+":"+fs_locations["runtime_exec"]],
-            stderr=devnull, stdout=devnull)
-        p.wait()
+        for filetocopy in filestocopy:
+            p = subprocess.Popen(
+                ["bash", data_transfer_protocol, filetocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])],
+                stderr=devnull, stdout=devnull)
+            p.wait()
 
         # Remove the local root directory
 #        p = subprocess.Popen(
@@ -448,6 +488,11 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
             ["nohup", fs_locations["runtime_exec"] + mname], 
             stderr=devnull, stdout=devnull
         )
+#        print(["nohup", fs_locations["runtime_exec"] + mname])
+
+    waitcount = {}
+    for job_id, task_list in tasks_per_job:
+        waitcount[job_id] = 0 
 
     is_over = False
     while not is_over:
@@ -477,9 +522,11 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 chk_time_cmd = "echo $(date +%H:%M)"
             touch_time_txt = subprocess.Popen(
                 manager_cmd, 
-                stderr=devnull, 
+#                stderr=devnull, 
                 stdout=subprocess.PIPE
             ).stdout.read().decode('ascii')
+#            print("touch time CMD", manager_cmd)
+#            print("touch time", touch_time_txt)
             if touch_time_txt.strip():
                 local_time_l = subprocess.Popen(
                     chk_time_cmd, 
@@ -530,8 +577,9 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
     print("Jobs are over")
 
 
-def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_folders,
-        fs_locations, tasks_per_job, log_dir, analysis_func=None, build_envroot=None, 
+def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, 
+        task_folders, fs_locations, tasks_per_job, log_dir,
+        data_transfer_protocol, analysis_func=None, build_envroot=None, 
         snapshot=None, noenvrm=False):
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
@@ -540,7 +588,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code, task_fol
     # The database is now connected with local machine
     if protocol == 'remote':
         shutil.rmtree(fs_locations['build_root'])
-        scp_cmd = ["scp", "-r", remote_machine+":"+fs_locations['runtime_root'], fs_locations['build_root']]
+        scp_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_root"]), fs_locations['build_root']]
         p = subprocess.Popen(scp_cmd, stderr=devnull, stdout=devnull)
         p.wait()
 
@@ -837,6 +885,12 @@ def highly_parallel_job_manager(options, exec_filename,
     else:
         env_root_dir, gen_env_root_dir = None, None
 
+    data_transfer_protocol = options['data_transfer_protocol']
+    email = options['email_address']
+    nsf = options['nodewise_scratch_folder']
+    nsm = options['nodewise_scratch_memory']
+    wt = options['walltime']
+
     while job_data:
         # Create the hosting file system
         task_folders, fs_locations = generate_exec_filesystem(
@@ -845,6 +899,7 @@ def highly_parallel_job_manager(options, exec_filename,
             job_data, 
             runtime_root_path,
             batch_job_code,
+            data_transfer_protocol,
             env_instr=env_instr,
             build_envroot=gen_env_root_dir
         )
@@ -856,9 +911,14 @@ def highly_parallel_job_manager(options, exec_filename,
             task_folders, 
             cpus_per_node, 
             requested_nodes, 
-            batch_job_code, 
+            batch_job_code,
             fs_locations,
-            singinfo=singinfo
+            data_transfer_protocol,
+            singinfo=singinfo,
+            email_address=email,
+            nodescratch_folder=nsf,
+            nodescratch_mem=nsm,
+            walltime=wt
         )
 
         if env_instr:
@@ -892,6 +952,7 @@ def highly_parallel_job_manager(options, exec_filename,
             fs_locations, 
             tasks_per_job, 
             log_dir,
+            data_transfer_protocol,
             build_envroot=env_root_dir,
             snapshot=snapshot
         )
