@@ -18,9 +18,9 @@ def define_options():
     options['singularity_container'], options['TYPES']['singularity_container'] = None, str
     options['singularity_modload'], options['TYPES']['singularity_modload'] = None, str
     options['data_transfer_protocol'], options['TYPES']['data_transfer_protocol'] = os.path.dirname(os.path.realpath(__file__)) + "/data_transfer_protocol.sh", str
-    options['email_address'], options['TYPES']['email_address'] = None, str
-    options['nodewise_scratch_folder'], options['TYPES']['nodewise_scratch_folder'] = None, str
-    options['nodewise_scratch_memory'], options['TYPES']['nodewise_scratch_memory'] = None, str
+    options['email_address'], options['TYPES']['email_address'] = "", str
+    options['nodewise_scratch_folder'], options['TYPES']['nodewise_scratch_folder'] = "", str
+    options['nodewise_scratch_memory'], options['TYPES']['nodewise_scratch_memory'] = "", str
     options['walltime'], options['TYPES']['walltime'] = "24:00:00", str
 
     return options

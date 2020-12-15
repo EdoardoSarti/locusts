@@ -380,7 +380,6 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
             with open(template_filename) as tempf:
                 text = tempf.read()
 
-# jobd, jobid, time, partition, cpuspertask, taskspercore, turnonnodescratch, nodescratchfolder, nodescratchmem, turnonmailtype, mailtype, turnonemailaddress, emailaddress, outpath, errpath, taskfile, exedir
             text = text.replace('<jobd>', batch_job_code) \
                 .replace('<jobid>', str(jobid).zfill(3)) \
                 .replace('<time>', str(walltime)) \
@@ -390,7 +389,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders,
                 .replace('<nodescratchfolder>', nodescratch_folder) \
                 .replace('<nodescratchmem>', nodescratch_mem) \
                 .replace('<turnonmailtype>', turnon_mailtype) \
-                .replace('<mailtype>', mailtype) \
+                .replace('<mailtype>', email_type) \
                 .replace('<turnonemailaddress>', turnon_email_address) \
                 .replace('<emailaddress>', email_address) \
                 .replace('<outpath>', outpath) \
