@@ -1,5 +1,6 @@
 MANIFEST.in
 README.md
+pyproject.toml
 setup.py
 src/locusts/__init__.py
 src/locusts/data_transfer_protocol.sh

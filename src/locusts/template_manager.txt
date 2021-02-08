@@ -1,10 +1,9 @@
 #!/bin/bash
 #! jobd, jobid, time, partition, cpuspertask, taskspercore, turnonnodescratch, nodescratchfolder, nodescratchmem, turnonmailtype, mailtype, turnonemailaddress, emailaddress, outpath, errpath, taskfile, exedir
 
-#SBATCH --job-name="ENC-<jobd>_<jobid>"
-#! How much wallclock time will be required?
+#SBATCH --job-name="LOC-<jobd>_<jobid>"
 #SBATCH --time=<time>
-#SBATCH --partition <partition>
+#SBATCH --partition=<partition>
 #SBATCH --cpus-per-task=<cpuspertask>
 #SBATCH --ntasks-per-core=<taskspercore>
 <turnonnodescratch>#SBATCH --gres=<nodescratchfolder>:<nodescratchmem>

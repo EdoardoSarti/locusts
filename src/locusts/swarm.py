@@ -22,6 +22,8 @@ def define_options():
     options['nodewise_scratch_folder'], options['TYPES']['nodewise_scratch_folder'] = "", str
     options['nodewise_scratch_memory'], options['TYPES']['nodewise_scratch_memory'] = "", str
     options['walltime'], options['TYPES']['walltime'] = "24:00:00", str
+    options['extra_outer_statements'], options['TYPES']['extra_outer_statements'] = "", str
+    options['partition'], options['TYPES']['partition'] = "", str
 
     return options
 
@@ -186,8 +188,6 @@ def create_exec_file(env_type, command_template, exec_filename, data):
 
 def launch(indir=None, outdir=None, code=None, spcins=None, shdins=None, locdir=None,
         outs=None, cmd=None, args=None, envroot=None, envfs=None, parf=None):
-
-    devnull = open("/dev/null", "w")
 
     # Check 3 compulsory args
     if not (code and cmd and parf):

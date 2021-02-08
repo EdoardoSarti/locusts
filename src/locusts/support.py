@@ -6,6 +6,8 @@ import time
 import shutil
 import subprocess
 
+global DEBUG
+DEBUG = True if "--locusts-debug" in sys.argv else False
 
 def string_decode_element(element, is_immutable=False, permissive=False):
     """WARNING: Cannot decode following types: decimal, complex, range, bytes,

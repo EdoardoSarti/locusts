@@ -15,6 +15,6 @@ then
     PATH_TO="helix.nih.gov:${ARR_TO[1]}"
 fi
 
-#echo "rsync -a ${PATH_FROM} ${PATH_TO}" >> baf
+echo "rsync -a ${PATH_FROM} ${PATH_TO}" | tee -a baf
 
 rsync -a ${PATH_FROM} ${PATH_TO}

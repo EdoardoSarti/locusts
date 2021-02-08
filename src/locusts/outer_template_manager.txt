@@ -1,32 +1,20 @@
 #!/bin/bash
-#!
-#! SLURM job script for Biowulf
-#! Last updated: Jul 02 2020
-#! jobd, jobid, cpuspertask, outpath, errpath, taskfile, exedir
 
 #SBATCH --job-name="<jobd><jobid>"
-#! How much wallclock time will be required?
-#SBATCH --time=24:00:00
-#! For jobs with interprocess communication, it is best to allocate the nodes exclusively 
-##SBATCH --exclusive
+#SBATCH --time=<time>
 #SBATCH --partition <partition>
 #SBATCH --cpus-per-task=<cpuspertask>
-#SBATCH --ntasks-per-core=1
-#! Uncomment if each process needs more than the default 2 GB per hyperthreaded core 
-##SBATCH --mem-per-cpu=Gg
-#! What types of email messages do you wish to receive?
-#SBATCH --mail-type=ALL
-#SBATCH --mail-user=sartie@nih.gov
-#! Uncomment this to prevent the job from being requeued (e.g. if
-#! interrupted by node failure or system downtime):
-##SBATCH --no-requeue
-##SBATCH --begin=now+1500
-#! Standard output and error log
+#SBATCH --ntasks-per-core=<taskspercore>
+<turnonnodescratch>#SBATCH --gres=<nodescratchfolder>:<nodescratchmem>
+<turnonmailtype>#SBATCH --mail-type=<mailtype>
+<turnonemailaddress>#SBATCH --mail-user=<emailaddress>
 #SBATCH --output=<outpath>
 #SBATCH --error=<errpath>
 
 <singularity_module_load>
 
 export SINGULARITY_BINDPATH="<main_path>"
+
+<extra_outer_statements>
 
 <singularity_command>bash <exedir>/<inner_manager>
