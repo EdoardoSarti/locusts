@@ -580,7 +580,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 touch_time_txt = subprocess.Popen(
                     manager_cmd,
                     stdout=subprocess.PIPE
-                ).stdout.read().decode('ascii'
+                ).stdout.read().decode('ascii')
             else:
                 touch_time_txt = subprocess.Popen(
                     manager_cmd, 

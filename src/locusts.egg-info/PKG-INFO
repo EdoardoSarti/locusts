@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: locusts
-Version: 0.0.18
+Version: 0.0.19
 Summary: Distributes many short tasks on multicore and hpc systems
 Home-page: https://github.com/pypa/sampleproject
 Author: Edoardo Sarti
