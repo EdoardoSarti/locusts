@@ -460,6 +460,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
     
     if protocol == 'remote':
         # Copy all files in exe dir in the remote counterpart
+        """
         filestocopy = [x for x in glob.glob(fs_locations["build_exec"]+"/*")]
         for filetocopy in filestocopy:
             if DEBUG:
@@ -471,12 +472,24 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
                     ["bash", data_transfer_protocol, filetocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])],
                     stderr=devnull, stdout=devnull)
             p.wait()
+        """i
+        filestocopy = "'"+fs_locations["build_exec"]+"/*'"
+        if DEBUG:
+            p = subprocess.Popen(
+                ["bash", data_transfer_protocol, filestocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])]
+            )
+        else:
+            p = subprocess.Popen(
+                ["bash", data_transfer_protocol, filestocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])],
+                stderr=devnull, stdout=devnull)
+        p.wait()
+
 
         # Remove the local root directory
 #        p = subprocess.Popen(
 #            ["rm", "-rf", fs_locations["build_root"]],
 #            stderr=devnull, stdout=devnull)
-        p.wait()
+#        p.wait()
 
         rmhidden_cmd = ["ssh", remote_machine, "rm", fs_locations["runtime_exec"]+".*"]
     else:
