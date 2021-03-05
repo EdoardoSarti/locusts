@@ -460,6 +460,19 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
     
     if protocol == 'remote':
         # Copy all files in exe dir in the remote counterpart
+        """
+        filestocopy = [x for x in glob.glob(fs_locations["build_exec"]+"/*")]
+        for filetocopy in filestocopy:
+            if DEBUG:
+                p = subprocess.Popen(
+                    ["bash", data_transfer_protocol, filetocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])]
+                )
+            else:
+                p = subprocess.Popen(
+                    ["bash", data_transfer_protocol, filetocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])],
+                    stderr=devnull, stdout=devnull)
+            p.wait()
+        """    ### ERROR WAS HERE
         filestocopy = fs_locations["build_exec"]+"/"
         if DEBUG:
             p = subprocess.Popen(
@@ -471,6 +484,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
                 stderr=devnull, stdout=devnull)
         p.wait()
 
+
         # Remove the local root directory
 #        p = subprocess.Popen(
 #            ["rm", "-rf", fs_locations["build_root"]],
@@ -478,19 +492,19 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
 #        p.wait()
 
 #        rmhidden_cmd = ["ssh", remote_machine, "rm", fs_locations["runtime_exec"]+".*"]
-#    else:
-#        rmhidden_cmd = ["rm", fs_locations["build_exec"]+".*"]
+    else:
+        rmhidden_cmd = ["rm", fs_locations["build_exec"]+".*"]
 
     # It is important to remove any hidden file from the runtime exe dir
     #  because locusts relies on those files to understand the degree of 
     #  completion
-#    if DEBUG:
-#        p = subprocess.Popen(rmhidden_cmd)
-#    else:
-#        p = subprocess.Popen(
-#            rmhidden_cmd, stderr=devnull, stdout=devnull
-#        )
-#    p.wait()
+    if DEBUG:
+        p = subprocess.Popen(rmhidden_cmd)
+    else:
+        p = subprocess.Popen(
+            rmhidden_cmd, stderr=devnull, stdout=devnull
+        )
+    p.wait()
 
     # List of 2-tuples (job ID, [tasks IDs])
     return tasks_per_job
@@ -815,13 +829,16 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
 
     # Remove all repositories
     if not noenvrm:
-        if protocol != 'local':
-            sshrm_cmd = ["ssh", remote_machine, "rm", "-rf", fs_locations['runtime_root']]
-            if DEBUG:
-                p = subprocess.Popen(sshrm_cmd)
-            else:
-                p = subprocess.Popen(sshrm_cmd, stderr=devnull, stdout=devnull)
-            p.wait()
+#############
+## DECOMMENT!!!
+#        if protocol != 'local':
+#            sshrm_cmd = ["ssh", remote_machine, "rm", "-rf", fs_locations['runtime_root']]
+#            if DEBUG:
+#                p = subprocess.Popen(sshrm_cmd)
+#            else:
+#                p = subprocess.Popen(sshrm_cmd, stderr=devnull, stdout=devnull)
+#            p.wait()
+############
         rm_cmd = ["rm", "-rf", fs_locations['build_root']]
         if DEBUG:
             p = subprocess.Popen(rm_cmd)
