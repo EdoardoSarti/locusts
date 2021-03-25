@@ -24,6 +24,7 @@ def define_options():
     options['walltime'], options['TYPES']['walltime'] = "24:00:00", str
     options['extra_outer_statements'], options['TYPES']['extra_outer_statements'] = "", str
     options['partition'], options['TYPES']['partition'] = "", str
+    options['exclusive'], options['TYPES']['exclusive'] = False, bool
 
     return options
 

@@ -2,7 +2,7 @@
 
 #SBATCH --job-name="<jobd><jobid>"
 #SBATCH --time=<time>
-#SBATCH --partition <partition>
+#SBATCH --partition=<partition>
 #SBATCH --cpus-per-task=<cpuspertask>
 #SBATCH --ntasks-per-core=<taskspercore>
 <turnonnodescratch>#SBATCH --gres=<nodescratchfolder>:<nodescratchmem>
@@ -10,6 +10,7 @@
 <turnonemailaddress>#SBATCH --mail-user=<emailaddress>
 #SBATCH --output=<outpath>
 #SBATCH --error=<errpath>
+<turnonexclusiveness>#SBATCH --exclusive
 
 <singularity_module_load>
 

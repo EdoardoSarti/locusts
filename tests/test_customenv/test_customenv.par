@@ -7,6 +7,7 @@ requested_nodes		2			# Number of nodes to be requested on HPC
 cpus_per_node		10			# CPU cores per node (not counting hyperthreading). If variable, choose minimum value
 hpc_exec_dir		/data/sartie/locusts_try			# HPC path where the jobs will be executed and the temp files stored
 local_shared_dir				# Do the HPC service and the local machine share a directory? If so, you can specify a shared folder to use
+partition		norm
 
 ### Local multithreading
 number_of_processors	4			# Number of processors to use on the local machine

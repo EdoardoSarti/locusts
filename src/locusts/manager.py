@@ -125,42 +125,44 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
 
     if protocol == 'remote' and not env_and_do_not_replicate:
         check_remote_path(remote_machine, fs_locations["runtime_root"])
+#        """
         if env_instr:
+            tr_cmd = ["bash", data_transfer_protocol, fs_locations["build_root"], "{0}:{1}".format(remote_machine, fs_locations["runtime_root"])]
             if DEBUG:
-                p = subprocess.Popen(
-                    ["bash", data_transfer_protocol, fs_locations["build_root"], "{0}:{1}".format(remote_machine, fs_locations["runtime_root"])],
-                )
+                print("COMMAND", " ".join(tr_cmd))
+                p = subprocess.Popen(tr_cmd)
             else:
-                p = subprocess.Popen(
-                    ["bash", data_transfer_protocol, fs_locations["build_root"], "{0}:{1}".format(remote_machine, fs_locations["runtime_root"])],
+                p = subprocess.Popen(tr_cmd,
                     stderr=devnull, stdout=devnull)
             p.wait()
         else:
+            mkd1_cmd = ["ssh", remote_machine, "mkdir", fs_locations["runtime_root"]]
+            mkd2_cmd = ["ssh", remote_machine, "mkdir", fs_locations["runtime_exec"]]
+            tr_cmd = ["bash", data_transfer_protocol, fs_locations["build_shared"], "{0}:{1}".format(remote_machine, fs_locations["runtime_shared"])]
             if DEBUG:
-                p = subprocess.Popen(
-                    ["ssh", remote_machine, "mkdir", fs_locations["runtime_root"]]
-                )
+                print("COMMAND", " ".join(mkd1_cmd))
+                p = subprocess.Popen(mkd1_cmd)
                 p.wait()
-                p = subprocess.Popen(
-                    ["ssh", remote_machine, "mkdir", fs_locations["runtime_exec"]],
-                )
+                print("COMMAND", " ".join(mkd2_cmd))
+                p = subprocess.Popen(mkd2_cmd)
                 p.wait()
-                p = subprocess.Popen(
-                    ["bash", data_transfer_protocol, fs_locations["build_shared"], "{0}:{1}".format(remote_machine, fs_locations["runtime_shared"])],
-                )
+                print("COMMAND", " ".join(tr_cmd))
+                p = subprocess.Popen(tr_cmd)
             else:
                 p = subprocess.Popen(
-                    ["ssh", remote_machine, "mkdir", fs_locations["runtime_root"]],
+                    mkd1_cmd,
                     stderr=devnull, stdout=devnull)
                 p.wait()
                 p = subprocess.Popen(
-                    ["ssh", remote_machine, "mkdir", fs_locations["runtime_exec"]],
+                    mkd2_cmd,
                     stderr=devnull, stdout=devnull)
                 p.wait()
                 p = subprocess.Popen(
-                    ["bash", data_transfer_protocol, fs_locations["build_shared"], "{0}:{1}".format(remote_machine, fs_locations["runtime_shared"])],
+                    tr_cmd,
                     stderr=devnull, stdout=devnull)
             p.wait()
+        time.sleep(10)
+#        """
 
     # Step 3: create Work sub-filesystem: "custom" or "locusts" mode -------------------
     if env_instr:  # "custom" mode: environment is created following instruction file
@@ -191,31 +193,12 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
                     .replace("<runtime_envroot_cp>", runtime_envroot_cp)
                 cmdlist = [x for x in cmd.split() if x]
                 if DEBUG:
+                    print("COMMAND", cmdlist)
                     p = subprocess.Popen(cmdlist)
                 else:
                     p = subprocess.Popen(cmdlist, stdout=devnull, stderr=devnull)
                 p.wait()
-
-        '''
-        workdir = ""
-        with open(env_instr) as instrf:
-            for line in instrf:
-                if not line.strip():
-                    continue
-                if line.startswith("#WORKDIR"):
-                    workdir = workpath + line.split(":")[1].strip()
-                    continue
-                if protocol != 'local' and not env_and_do_not_replicate:
-                    cmd = line.replace("<build_envroot>", build_envroot) \
-                        .replace("<mkdir>", mkdircmd) \
-                        .replace("<runtime_envroot_mkdir>", runtime_envroot_mkdir) \
-                        .replace("<copy>", copycmd) \
-                        .replace("<runtime_envroot_cp>", runtime_envroot_cp)
-                    cmdlist = [x for x in cmd.split() if x]
-
-                    p = subprocess.Popen(cmdlist, stdout=devnull, stderr=devnull)
-                    p.wait()
-        '''
+                time.sleep(10)
 
         if not workdir:
             print(("ERROR (generate_filesystem): Please specify the directory "
@@ -258,13 +241,12 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
 
         # This new cache has to be copied remotely, in a separate way
         if protocol == 'remote':
+            tr_cmd = ["bash", data_transfer_protocol, build_cache, "{0}:{1}".format(remote_machine, runtime_cache)]
             if DEBUG:
-                p = subprocess.Popen(
-                    ["bash", data_transfer_protocol, build_cache, "{0}:{1}".format(remote_machine, runtime_cache)]
-                )
+                print("COMMAND", tr_cmd)
+                p = subprocess.Popen(tr_cmd)
             else:
-                p = subprocess.Popen(
-                    ["bash", data_transfer_protocol, build_cache, "{0}:{1}".format(remote_machine, runtime_cache)],
+                p = subprocess.Popen(tr_cmd,
                     stderr=devnull, stdout=devnull)
             p.wait()
             
@@ -307,13 +289,12 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
     
         if protocol == "remote":
             # Transfer local temporary filesystem in the remote location
+            tr_cmd = ["bash", data_transfer_protocol, fs_locations["build_work"], "{0}:{1}".format(remote_machine, fs_locations["runtime_work"])]
             if DEBUG:
-                p = subprocess.Popen(
-                    ["bash", data_transfer_protocol, fs_locations["build_work"], "{0}:{1}".format(remote_machine, fs_locations["runtime_work"])]
-                )
+                print("COMMAND", tr_cmd)
+                p = subprocess.Popen(tr_cmd)
             else:
-                p = subprocess.Popen(
-                    ["bash", data_transfer_protocol, fs_locations["build_work"], "{0}:{1}".format(remote_machine, fs_locations["runtime_work"])],
+                p = subprocess.Popen(tr_cmd,
                     stderr=devnull, stdout=devnull)
             p.wait()
 
@@ -325,7 +306,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
         data_transfer_protocol, singinfo=(None, None, None), task_cd=None,
         email_address="", email_type="ALL", tasks_per_core=1,
         nodescratch_folder="", nodescratch_mem="", walltime="24:00:00",
-        outer_statements=""):
+        outer_statements="", exclusive=False):
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
@@ -349,6 +330,10 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
              "must be either both present or absent"))
         exit(1)
 
+    turnon_exclusiveness = "#"
+    if exclusive:
+        turnon_exclusiveness = ""
+
     if len(walltime) < 7 or walltime[-3] != ":" or walltime[-6] != ":":
         print("ERROR (manager): walltime is not well formatted: XX:XX:XX")
         print("                 "+walltime)
@@ -361,6 +346,8 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
     # Is there singularity? Does it use a module?
     if singinfo[0]:
         singularitypath, singularitycont, singmodload = singinfo
+    else:
+        singularitypath, singularitycont, singmodload = "", "", ""
 
     # List of task ids
     taskid_list = sorted([k for k in task_folders])
@@ -422,6 +409,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
                 .replace('<turnonmailtype>', turnon_mailtype) \
                 .replace('<mailtype>', email_type) \
                 .replace('<turnonemailaddress>', turnon_email_address) \
+                .replace('<turnonexclusiveness>', turnon_exclusiveness) \
                 .replace('<emailaddress>', email_address) \
                 .replace('<outpath>', outpath) \
                 .replace('<errpath>', errpath) \
@@ -461,13 +449,12 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
     if protocol == 'remote':
         # Copy all files in exe dir in the remote counterpart
         filestocopy = fs_locations["build_exec"]+"/"
+        tr_cmd = ["bash", data_transfer_protocol, filestocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])]
         if DEBUG:
-            p = subprocess.Popen(
-                ["bash", data_transfer_protocol, filestocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])]
-            )
+            print("COMMAND", tr_cmd)
+            p = subprocess.Popen(tr_cmd)
         else:
-            p = subprocess.Popen(
-                ["bash", data_transfer_protocol, filestocopy, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"])],
+            p = subprocess.Popen(tr_cmd,
                 stderr=devnull, stdout=devnull)
         p.wait()
 
@@ -508,39 +495,30 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
 
     if protocol != 'local':
         for job_id, task_list in tasks_per_job:
+            chk_cmd = [
+                "ssh",
+                remote_machine,
+                "sbatch",
+                fs_locations["runtime_exec"] + 'outer_manager_{0}{1}.slurm' \
+                    .format(batch_job_code, str(job_id).zfill(3))
+            ]
             if DEBUG:
-                p = subprocess.Popen(
-                    [
-                        "ssh",
-                        remote_machine,
-                        "sbatch",
-                        fs_locations["runtime_exec"] + 'outer_manager_{0}{1}.slurm' \
-                            .format(batch_job_code, str(job_id).zfill(3))
-                    ]
-                )
+                print("COMMAND", chk_cmd)
+                p = subprocess.Popen(chk_cmd)
             else:
-                p = subprocess.Popen(
-                    [
-                        "ssh", 
-                        remote_machine, 
-                        "sbatch", 
-                        fs_locations["runtime_exec"] + 'outer_manager_{0}{1}.slurm' \
-                            .format(batch_job_code, str(job_id).zfill(3))
-                    ],
+                p = subprocess.Popen(chk_cmd,
                     stderr=devnull,
                     stdout=devnull
                 )
     else:
         # If no hpc, there is only one node, i.e. one manager
         mname = 'outer_manager_{0}{1}.slurm'.format(batch_job_code, str(0).zfill(3))
+        nhp_cmd = ["nohup", fs_locations["runtime_exec"] + mname]
         if DEBUG:
-            p = subprocess.Popen(
-                ["nohup", fs_locations["runtime_exec"] + mname],
-                stderr=devnull, stdout=devnull
-            )
+            print("COMMAND", nhp_cmd)
+            p = subprocess.Popen(nhp_cmd)
         else:
-            p = subprocess.Popen(
-                ["nohup", fs_locations["runtime_exec"] + mname], 
+            p = subprocess.Popen(nhp_cmd,
                 stderr=devnull, stdout=devnull
             )
 #        print(["nohup", fs_locations["runtime_exec"] + mname])
@@ -576,6 +554,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 manager_cmd = ["ls", "-latrh", macname]
                 chk_time_cmd = "echo $(date +%H:%M)"
             if DEBUG:
+                print("COMMAND", manager_cmd)
                 touch_time_txt = subprocess.Popen(
                     manager_cmd,
                     stdout=subprocess.PIPE
@@ -588,6 +567,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 ).stdout.read().decode('ascii')
             if touch_time_txt.strip():
                 if DEBUG:
+                    print("COMMAND", chk_time_cmd)
                     local_time_l = subprocess.Popen(
                         chk_time_cmd,
                         stdout=subprocess.PIPE,
@@ -616,6 +596,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 if protocol != 'local':
                     isitthere_cmd = ["ssh " + remote_machine + ' \'squeue --format="%.18i %.9P %.100j %.8u %.2t %.10M %.6D %R"\'']
                     if DEBUG:
+                        print("COMMAND", isitthere_cmd)
                         isitthere_txt = subprocess.Popen(
                             isitthere_cmd,
                             stdout=subprocess.PIPE,
@@ -663,6 +644,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
         shutil.rmtree(fs_locations['build_root'])
         scp_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_root"]), fs_locations['build_root']]
         if DEBUG:
+            print("COMMAND", scp_cmd)
             p = subprocess.Popen(scp_cmd)
         else:
             p = subprocess.Popen(scp_cmd, stderr=devnull, stdout=devnull)
@@ -674,11 +656,14 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
         # Move the mail exec task files to logs/
         tfname = "taskfile_{0}{1}.*".format(batch_job_code, str(job_id).zfill(3))
         task_filename = fs_locations["build_exec"] + tfname
+        mv_cmd = "mv {0} {1}".format(task_filename, log_dir)
+        #mv_cmd = ["mv", task_filename, log_dir]
         if DEBUG:
-            p = subprocess.Popen(["mv", task_filename, log_dir])
+            print("COMMAND", mv_cmd)
+            p = subprocess.Popen(mv_cmd, shell=True)
         else:
-            p = subprocess.Popen(
-                ["mv", task_filename, log_dir], 
+            p = subprocess.Popen(mv_cmd,
+                shell=True,
                 stderr=devnull, 
                 stdout=devnull
             )
@@ -692,6 +677,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
         if remote_machine:
             grep_pending_cmd = ["ssh", remote_machine] + grep_pending_cmd
         if DEBUG:
+            print("COMMAND", grep_pending_cmd)
             txtlines = subprocess.Popen(
                 grep_pending_cmd,
                 stdout=subprocess.PIPE
@@ -746,13 +732,12 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
                     + relative_batch_folder + relative_task_folder + output)
                 if os.path.exists(output_path) and ((analysis_func == None) or
                     (analysis_func(output_path))): 
+                    mv_cmd = ["mv", output_path, output_task_dir]
                     if DEBUG:
-                        p = subprocess.Popen(
-                            ["mv", output_path, output_task_dir]
-                        )
+                        print("COMMAND", mv_cmd)
+                        p = subprocess.Popen(mv_cmd)
                     else:
-                        p = subprocess.Popen(
-                            ["mv", output_path, output_task_dir], 
+                        p = subprocess.Popen(mv_cmd,
                             stderr=devnull, 
                             stdout=devnull
                         )
@@ -806,6 +791,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
                         fname = fs_locations["build_root"] + f  # Local copies have been restored at the beginning of this function
                         cpcmd = ["cp", fname, build_envroot+f]
                         if DEBUG:
+                            print("COMMAND", cpcmd)
                             p = subprocess.Popen(cpcmd)
                         else:
                             p = subprocess.Popen(cpcmd, stdout=devnull, stderr=devnull)
@@ -813,17 +799,20 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
 
         output_d, output_paths, completed_with_error = {}, None, None
 
+
     # Remove all repositories
-    if not noenvrm:
+    if not DEBUG:
         if protocol != 'local':
             sshrm_cmd = ["ssh", remote_machine, "rm", "-rf", fs_locations['runtime_root']]
             if DEBUG:
+                print("COMMAND", sshrm_cmd)
                 p = subprocess.Popen(sshrm_cmd)
             else:
                 p = subprocess.Popen(sshrm_cmd, stderr=devnull, stdout=devnull)
             p.wait()
         rm_cmd = ["rm", "-rf", fs_locations['build_root']]
         if DEBUG:
+            print("COMMAND", rm_cmd)
             p = subprocess.Popen(rm_cmd)
         else:
             p = subprocess.Popen(rm_cmd, stderr=devnull, stdout=devnull)
@@ -835,11 +824,22 @@ def take_snapshot(protocol_triad, root_dir):
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
 
+    """
+    for treedir, files in tree:
+        for f in files:
+            if f == "*":
+                lsrcmd = ["ls", "-ltrh",treedir]
+            elif f == "**":
+                lsrcmd = ["ls", "-ltrhR",treedir]
+##### ARRIVATO QUI
+    """
+
     lsrcmd = ["ls", "-ltrhR", root_dir]
     if remote_machine:
         lsrcmd = ["ssh", remote_machine] + lsrcmd
 
     if DEBUG:
+        print("COMMAND", lsrcmd)
         textlines = subprocess.Popen(lsrcmd,
             stdout=subprocess.PIPE).stdout.readlines()
     else:
@@ -995,6 +995,7 @@ def highly_parallel_job_manager(options, exec_filename,
     wt = options['walltime']
     out_st = options['extra_outer_statements']
     partition = options['partition']
+    exclusive = options['exclusive']
 
     while job_data:
         # Create the hosting file system
@@ -1025,14 +1026,19 @@ def highly_parallel_job_manager(options, exec_filename,
             nodescratch_folder=nsf,
             nodescratch_mem=nsm,
             walltime=wt,
-            outer_statements=out_st
+            outer_statements=out_st,
+            exclusive=exclusive
         )
 
         if env_instr:
             snapshot = take_snapshot(
-                protocol_triad, 
+                (protocol, "", local_shared_folder), 
                 env_root_dir
             )
+            if not snapshot:
+                print("ERROR: empty snapshot of {0} was taken".format(env_root_dir))
+                print("    Locusts needs to take snapshot to compare filesystems")
+                exit(1)
         else:
             snapshot = {}
 
@@ -1061,7 +1067,8 @@ def highly_parallel_job_manager(options, exec_filename,
             log_dir,
             data_transfer_protocol,
             build_envroot=env_root_dir,
-            snapshot=snapshot
+            snapshot=snapshot,
+            noenvrm = noenvrm
         )
         if witherr:
             completed_with_error |= witherr
