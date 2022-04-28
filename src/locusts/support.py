@@ -4,6 +4,7 @@ import sys
 import glob
 import time
 import shutil
+import datetime
 import subprocess
 
 global DEBUG
@@ -112,15 +113,36 @@ def beautify_bash_oneliner(command, replacements={}):
     return new_command
 
 
-def distribute_items_in_fixed_length_list(n_items, list_length):
-    factor_1 = ((list_length - 1) % n_items) + 1
-    factor_2 = n_items - (list_length % n_items)
-    list_1 = [((list_length - 1) // n_items) + 1]
-    list_2 = [list_length // n_items]
-    return list_1 * factor_1 + list_2 * factor_2
+def distribute_items_in_fixed_length_list(list_length, n_items, min_in_list=None):
+    base = n_items // list_length
+    if min_in_list is not None:
+        if base < min_in_list:
+            list_length = max(1, n_items // min_in_list) # if n_items < min_in_list, reserve a node anyway
+            base = n_items // list_length
+    plus = n_items - base*list_length
+    reslist = [base]*list_length
+    for i in range(plus):
+        reslist[i] += 1
+    return reslist
 
 
 def reduceslash(string):
     while string != string.replace("//", "/"):
         string = string.replace("//", "/")
     return string.strip()
+
+
+if __name__ == "__main__":
+    requested_nodes = 300
+    cpus_per_node = 16
+    min_stack_per_core = 1
+    n_taskid_list = 3
+    print("requested_nodes", requested_nodes)
+    print("cpus_per_node", cpus_per_node)
+    print("min_stack_per_core", min_stack_per_core)
+    print("n_taskid_list", n_taskid_list)
+
+    tasks_per_node_list = distribute_items_in_fixed_length_list(requested_nodes, n_taskid_list)
+    print("new tasks_per_node_list", tasks_per_node_list)
+    tasks_per_node_list = distribute_items_in_fixed_length_list(requested_nodes, n_taskid_list, min_in_list=min_stack_per_core*cpus_per_node)
+    print("new tasks_per_node_list", tasks_per_node_list)

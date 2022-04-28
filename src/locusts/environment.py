@@ -46,6 +46,11 @@ def parse_fs_tree(fst_path, env_root):
             if not tline.strip():
                 continue
 
+            # Exit if it is not a tsv file
+            if line.startswith(" ") and line.strip():
+                print("ERROR: the file {0} must be tab-indented, NOT space-indented (line {1})".format(fst_path, il))
+                exit(1)
+
             # Count how many prepending tabs there are 
             #  and update the depth level
             # NOTICE: is_dir here refers to previous record
@@ -90,7 +95,7 @@ def parse_fs_tree(fst_path, env_root):
 
             # Looks for dir and file paths
             if is_dir:
-                if "**" in selection:
+                if selection == "**":
                     recursive = True
                 else:
                     recursive = False
@@ -107,14 +112,29 @@ def parse_fs_tree(fst_path, env_root):
                 for d in glob.glob(addglobpath, recursive=False):
                     if d not in newdirs:
                         newdirs.append(d)
+            if recursive:
+                dirs += newdirs 
+#                print("DIRS ADDED:", newdirs)
+            elif is_dir: # and not recursive...
+                this_dir = env_root + "/" + prespath + "/" + basename + '/'
+                if this_dir not in dirs:
+                    dirs.append(this_dir)
+#                    print("DIRS ADDED:", this_dir)
+
             # Look for files (== all - dirs)
+            newfiles = [] 
             newall = glob.glob(globpath, recursive=recursive)
-            newfiles = []
-            dirs += newdirs
+            # Be sure to remove also the empty dirs that might have been read along with the files, e.g. if the selection was "*"
             for x in newall:
-                if reduceslash(x+"/") not in dirs:
+                if x[-1] != "/" and reduceslash(x+"/") not in dirs and reduceslash(x+"/") not in newdirs:
+#                if reduceslash(x+"/") not in dirs and reduceslash(x+"/") not in newdirs:
                     newfiles.append(x)
+#            print("FILES ADDED:", newfiles)
             files += newfiles
+#            print(line)
+#            print(globpath)
+#            print(newall)
+#            print("FILES ADDED:", newfiles)
 
             # If a dir has been read, present path must be updated (enters that dir)
             if is_dir:
@@ -160,6 +180,7 @@ def parse_fs_tree(fst_path, env_root):
     new_emptyfolders = set(find_empty_folders(dirs, new_files))
 
     # Update dir list
+#    print("KEEPDIRS:", keepdirs)
     new_dirs = []
     for d in dirs:
         # If !! says it should be kept, do it
@@ -182,6 +203,7 @@ def parse_fs_tree(fst_path, env_root):
     instructions = [] 
     for d in new_dirs:
         rd = "/".join([x for x in d.replace(env_root, "").split("/") if x])
+#        print(d, d.replace(env_root, "").split("/"), rd)
         instructions.append("<mkdir> <runtime_envroot_mkdir>/{0}".format(rd))
     for f in new_files:
         rf = "/".join([x for x in f.replace(env_root, "").split("/") if x])

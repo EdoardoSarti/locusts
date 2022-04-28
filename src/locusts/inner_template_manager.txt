@@ -1,6 +1,9 @@
 #!/bin/bash
 
-touch <exedir>/.manager_activity_check_<jobd><jobid>
+HN=`echo $HOSTNAME`
+HN2=`hostname`
+HNAME=`awk -v hn=${HN} -v hn2=${HN2} 'BEGIN{if (hn) {print hn} else if (hn2) {print hn2}}'`
+echo "Machine: ${HNAME}" > <exedir>/.manager_activity_check_<jobd><jobid> 
 
 N=`wc <taskfile> | awk '{print $1}'`
 for ((i=1;i<=N;i++))

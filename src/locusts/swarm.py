@@ -25,7 +25,12 @@ def define_options():
     options['extra_outer_statements'], options['TYPES']['extra_outer_statements'] = "", str
     options['partition'], options['TYPES']['partition'] = "", str
     options['exclusive'], options['TYPES']['exclusive'] = False, bool
-
+    options['constraint'], options['TYPES']['constraint'] = "", str
+    options['min_stack_per_core'], options['TYPES']['min_stack_per_core'] = 10, int
+    options['waiting_time'], options['TYPES']['waiting_time'] = -1, int
+    options['memory'], options['TYPES']['memory'] = '', str
+    options['memory_per_cpu'], options['TYPES']['memory_per_cpu'] = '', str
+    options['only_gather'], options['TYPES']['only_gather'] = False, bool
     return options
 
 

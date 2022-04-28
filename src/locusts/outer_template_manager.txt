@@ -5,12 +5,15 @@
 #SBATCH --partition=<partition>
 #SBATCH --cpus-per-task=<cpuspertask>
 #SBATCH --ntasks-per-core=<taskspercore>
+<turnonconstraint>#SBATCH --constraint=<constraint>
 <turnonnodescratch>#SBATCH --gres=<nodescratchfolder>:<nodescratchmem>
 <turnonmailtype>#SBATCH --mail-type=<mailtype>
 <turnonemailaddress>#SBATCH --mail-user=<emailaddress>
 #SBATCH --output=<outpath>
 #SBATCH --error=<errpath>
 <turnonexclusiveness>#SBATCH --exclusive
+<turnonmem>#SBATCH --mem=<mem>
+<turnonmempercpu>#SBATCH --mem-per-cpu=<mempercpu>
 
 <singularity_module_load>
 
