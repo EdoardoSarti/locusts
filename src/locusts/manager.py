@@ -20,6 +20,7 @@ def check_remote_path(remote_machine, root_path):
     """Checks existence of parent folder of remote root path
     and non-existence of remote root path itself"""
 
+    print("ssh", remote_machine, "ls", root_path)
     lsdir = subprocess.Popen(["ssh", remote_machine, "ls", root_path], stdout=open('/dev/null', 'w'), stderr=subprocess.PIPE).stderr.read().decode('ascii').strip()
     lsdirup = subprocess.Popen(["ssh", remote_machine, "ls", os.path.dirname(root_path[:-1])], stdout=open('/dev/null', 'w'), stderr=subprocess.PIPE).stderr.read().decode('ascii').strip()
     # If parent directory of root path is not there, error
@@ -38,7 +39,7 @@ def check_remote_path(remote_machine, root_path):
 
 
 def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_path, batch_job_code, 
-        data_transfer_protocol, env_instr=None, build_envroot=None, only_gather=False):
+        data_transfer_protocol, batch_size=10000, env_instr=None, build_envroot=None, only_gather=False):
     
     devnull = open('/dev/null', 'w')
 
@@ -97,18 +98,24 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         os.mkdir(fs_locations["build_exec"])
     if not os.path.exists(fs_locations["build_work"]):
         os.mkdir(fs_locations["build_work"])
-        
-    exec_filesystem = {}  # For each task contains remote work path and shared files paths
+
+    # Must contain: 'batch_paths' -> list ; 'shared_path' 
+    task_folders = {}  # For each task contains remote work path and shared files paths
     shared = {}
     # Step 2: create Shared sub-filesystem -------------------
     for jdi, jd in enumerate(job_data):
-        batchno = jdi // 10000
-        exec_filesystem[jd['unique_code']] = [None, {}]
+        batchno = jdi // batch_size
+        # QUI QUI QUI
+        #print(jdi)
+        #print(jdi, jd)
+        #print(task_folders)
+        #print()
+        replacements = {}
 
         for skey in jd['shared_inps']:
             if skey not in shared:
                 # Create local batch dir, and copy file there
-                batchisp = (len(shared) + 1)//10000
+                batchisp = (len(shared) + 1)//batch_size
                 build_shbatch_folder = build_shared_path + 'batch_' + str(batchisp) + '/'  # NOTICE: build_shared_path is local
                 if not os.path.exists(build_shbatch_folder):
                     os.mkdir(build_shbatch_folder)
@@ -119,10 +126,11 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
                 runtime_shdest_path = (fs_locations["runtime_shared"]
                         + 'batch_' + str(batchisp) + '/' + os.path.basename(jd['shared_inps'][skey]))
 
-                shared[skey] = runtime_shdest_path  # shared folder path at execution time
+                shared[skey] = batchisp  # shared folder path at execution time
             else:
-                runtime_shdest_path = shared[skey]
-            exec_filesystem[jd['unique_code']][1]["<shared>"+skey] = runtime_shdest_path
+                runtime_shdest_path = (fs_locations["runtime_shared"]
+                        + 'batch_' + str(shared[skey]) + '/' + os.path.basename(jd['shared_inps'][skey]))
+            replacements["<shared>"+skey] = runtime_shdest_path
 
     if protocol == 'remote' and (not env_and_do_not_replicate) and (not only_gather):
         check_remote_path(remote_machine, fs_locations["runtime_root"])
@@ -188,7 +196,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         runtime_task_dir = runtime_cache + 'tasks/'
         os.mkdir(build_task_dir)
         for jdi, jd in enumerate(job_data):
-            batchno = jdi // 10000
+            batchno = jdi // batch_size
 
             # Create local task folders and copy clean env files
             build_batch_folder = build_task_dir + 'batch_' + str(batchno) + '/'
@@ -197,13 +205,13 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             runtime_batch_folder = runtime_task_dir + 'batch_' + str(batchno) + '/'
             build_task_path = build_batch_folder + 'task_' + jd['unique_code'] + '.sh'
             runtime_task_path = runtime_batch_folder + 'task_' + jd['unique_code'] + '.sh'
-            exec_filesystem[jd['unique_code']][0] = (runtime_batch_folder, os.path.basename(runtime_task_path))
+            task_folders[jd['unique_code']] = (runtime_batch_folder, os.path.basename(runtime_task_path))
 
             # There, create individual task files
             #  Correctly indent the command, writes it in task.sh and gives it exe privileges
             new_command = beautify_bash_oneliner(
                 "cd {0}; ".format(workdir) + jd['command'], 
-                replacements=exec_filesystem[jd['unique_code']][1])
+                replacements=replacements)
 #            print(new_command)
             with open(build_task_path, "w") as tf:
                 tf.write(new_command)
@@ -213,14 +221,14 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
     else:  # "locusts" mode: optimized environment for parallel and safe execution
     
         # Batch folders for every 10000 tasks
-        for i in range(len(job_data)//10000 + 1):
+        for i in range(len(job_data)//batch_size + 1):
             batch_folder = fs_locations["build_work"] + 'batch_' + str(i) + '/'
             if not os.path.exists(batch_folder):
                 os.mkdir(batch_folder)
     
         # Job folders for individual tasks
         for jdi, jd in enumerate(job_data):
-            batchno = jdi // 10000
+            batchno = jdi // batch_size
     
             # Work sub-environment --------------------------------------------
             # Create local task folders and copy clean env files
@@ -235,7 +243,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             # Correctly indent the command, writes it in task.sh and gives it exe privileges
             new_command = beautify_bash_oneliner(
                 jd['command'], 
-                replacements=exec_filesystem[jd['unique_code']][1])
+                replacements=replacements)
             task_filename = job_folder + "task.sh"
             with open(task_filename, "w") as tf:
                 tf.write(new_command)
@@ -244,10 +252,10 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             # Runtime paths for task folders
             rem_jf = (fs_locations["runtime_work"] + 'batch_'
                     + str(batchno) + '/' + 'task_' + jd['unique_code'] + '/')
-            exec_filesystem[jd['unique_code']][0] = (rem_jf, "task.sh")
+            task_folders[jd['unique_code']] = (rem_jf, "task.sh")
 
 
-    return {k : exec_filesystem[k][0] for k in exec_filesystem}, fs_locations
+    return task_folders, fs_locations
 
 
 def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
