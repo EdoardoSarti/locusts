@@ -37,7 +37,6 @@ def check_remote_path(remote_machine, root_path):
         print('ssh {1} rm -rf {0}'.format(root_path, remote_machine))
         exit(1)
 
-
 def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_path, batch_job_code, 
         data_transfer_protocol, batch_size=10000, env_instr=None, build_envroot=None, only_gather=False):
     
@@ -253,7 +252,8 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
             rem_jf = (fs_locations["runtime_work"] + 'batch_'
                     + str(batchno) + '/' + 'task_' + jd['unique_code'] + '/')
             task_folders[jd['unique_code']] = (rem_jf, "task.sh")
-
+            if DEBUG:
+                print("SIZE", jdi, get_obj_size(task_folders))
 
     return task_folders, fs_locations
 
@@ -334,38 +334,6 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
     else:
         turnon_mempercpu = "#"
 
-
-    """
-    # Reassess the number of requested nodes for avoiding asking
-    #  for too many nodes. For requiring another node, all cpus of all
-    #  nodes must have at least 10 tasks assigned to them
-    #  WARNING: this does not keep into account the length of a task!
-    if protocol != 'local' and min(tasks_per_node_list) < min_stack_per_core*cpus_per_node:
-        grand = min_stack_per_core*cpus_per_node / max(tasks_per_node_list)
-        print("grand", grand)
-        rqn = (
-            int(requested_nodes / grand)
-            + max(tasks_per_node_list) - min(tasks_per_node_list)
-        )
-        print("rqn", rqn)
-        requested_nodes = max(1, rqn)
-        print("requested_nodes", requested_nodes)
-        tasks_per_node_list = distribute_items_in_fixed_length_list(
-            requested_nodes, 
-            len(taskid_list)
-        )
-        print("new tasks_per_node_list", tasks_per_node_list)
-
-    tasks_per_node_list = [x for x in tasks_per_node_list if x > 0]
-    if len(tasks_per_node_list) < cpus_per_node:
-        print("too many processors have been requested")
-        if protocol != 'local':
-            print("node exclusiveness will be turned off")
-            turnon_exclusiveness = "#"
-        cpus_per_node = len(tasks_per_node_list)
-    """
-
-
     print("Protocol used:", protocol)
     print("Total number of tasks:", len(taskid_list))
     print("Actual number of nodes used:", requested_nodes)
@@ -445,10 +413,14 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
         # Job manager identifier and associated tasks
         tasks_per_job.append((jobid, taskid_list[ik:ik+tasks_per_node]))
 
+        if DEBUG:
+            print("SIZE", jobid, get_obj_size(tasks_per_job))
+
     if only_gather:
         return tasks_per_job, ""
 
     manager_cmd, macname = [], {}
+    manager_cmd.append("(")
     manager_cmd.append("echo MANAGERS")
     for job_id, task_list in tasks_per_job:
         macname[job_id] = "{0}/.manager_activity_check_{1}{2}".format(
@@ -456,14 +428,15 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
             batch_job_code,
             str(job_id).zfill(3)
         )
-        manager_cmd.append(" ".join(["date", "-r", macname[job_id], "+%H:%M", "2>&1"]))
+        manager_cmd.append(" ".join(["date", "-r", macname[job_id], "+%H:%M", "2>periodic_check.err.txt"]))
     manager_cmd.append("echo MACNAMES")
     for job_id, task_list in tasks_per_job:
-        manager_cmd.append(" ".join(["cat", macname[job_id], "2>&1"]))
+        manager_cmd.append(" ".join(["cat", macname[job_id], "2>>periodic_check.err.txt"]))
     manager_cmd.append("echo STATUS")
-    manager_cmd.append('squeue --format="%.18i %.9P %.100j %.8u %.2t %.10M %.6D %R"')
+    manager_cmd.append('squeue --format="%.18i %.9P %.100j %.50u %.2t %.10M %.6D %R"')
     manager_cmd.append("echo TIME")
     manager_cmd.append("echo $(date +%H:%M)")
+    manager_cmd.append(") > {0}".format(fs_locations["runtime_exec"] + 'periodic_check.log.txt'))
     with open(fs_locations["build_exec"] + 'periodic_check.sh', 'w') as cmf:
         cmf.write("\n".join(manager_cmd))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'periodic_check.sh'])
@@ -490,7 +463,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
 
 
 def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_job,
-        waiting_time, only_gather=False):
+        waiting_time, data_transfer_protocol, log_folder, only_gather=False):
     # There must be a passwordless connection between the two machines: to
     # achieve it, ssh-agent and then ssh-add.
     # If the two machines share a folder - and thus there is no need to ssh to
@@ -558,55 +531,76 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
 
         if protocol != 'local':
             manager_cmd = ["ssh", remote_machine, "bash", fs_locations["runtime_exec"] + 'periodic_check.sh']
+            smallscp_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"] + 'periodic_check.log.txt'), log_folder]
         else:
             manager_cmd = ["bash", fs_locations["build_exec"] + 'periodic_check.sh']
+            smallscp_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'periodic_check.log.txt'), log_folder]
 
         if DEBUG:
             print("COMMAND", manager_cmd)
-            periodic_check_txt = subprocess.Popen(
+            p = subprocess.Popen(
                 manager_cmd,
                 stdout=subprocess.PIPE
-            ).stdout.read().decode('utf-8')
+            )
         else:
-            periodic_check_txt = subprocess.Popen(
+            p = subprocess.Popen(
                 manager_cmd, 
                 stderr=devnull, 
                 stdout=subprocess.PIPE
-            ).stdout.read().decode('utf-8')
+           )
+        p.wait()
+        if DEBUG:
+            print("COMMAND", smallscp_cmd)
+            p = subprocess.Popen(
+                smallscp_cmd,
+                stdout=subprocess.PIPE
+            )
+        else:
+            p = subprocess.Popen(
+                smallscp_cmd, 
+                stderr=devnull, 
+                stdout=subprocess.PIPE
+           )
+        p.wait()
 
         mng_lines, mac_lines, status_lines, time_line = False, False, False, False
         mng_times, mac_names = [], []
-        for line in periodic_check_txt.split('\n'):
-            if not line.strip():
+        with open(log_folder + '/periodic_check.log.txt') as logf:
+            print("OPENING", log_folder + '/periodic_check.log.txt')
+            for line in logf:
+                if not line.strip():
+                    continue
+                if line == "MANAGERS":
+                    mng_lines = True
+                    continue
+                elif line == "MACNAMES":
+                    mng_lines = False
+                    mac_lines = True
+                    continue
+                elif line == "STATUS":
+                    mac_lines = False
+                    status_lines = True
+                    continue
+                elif line == "TIME":
+                    status_lines = False
+                    time_line = True
+                    continue
+                if mng_lines:
+                    mng_times.append(line.strip())
+                elif mac_lines:
+                    mac_names.append(line.strip()) 
+                elif status_lines:
+#                    print(line)
+                    if line.split()[2] in [batch_job_code + str(x[0]).zfill(3) for x in tasks_per_job]:
+#                        print("YE", line)
+                        status[int(line.split()[2][len(batch_job_code):])] = line.split()[4]
+                        hasrun[int(line.split()[2][len(batch_job_code):])] = True
+                elif time_line:
+                    real_time = line.strip()
+                    real_time = int(real_time.split(":")[0])*60 + int(real_time.split(":")[1])
+            if not (mng_times and mac_names):
+                print("STILL NO CACHE FILES...")
                 continue
-            if line == "MANAGERS":
-                mng_lines = True
-                continue
-            elif line == "MACNAMES":
-                mng_lines = False
-                mac_lines = True
-                continue
-            elif line == "STATUS":
-                mac_lines = False
-                status_lines = True
-                continue
-            elif line == "TIME":
-                status_lines = False
-                time_line = True
-                continue
-            if mng_lines:
-                mng_times.append(line.strip())
-            elif mac_lines:
-                mac_names.append(line.strip()) 
-            elif status_lines:
-#                print(line)
-                if line.split()[2] in [batch_job_code + str(x[0]).zfill(3) for x in tasks_per_job]:
-#                    print("YE", line)
-                    status[int(line.split()[2][len(batch_job_code):])] = line.split()[4]
-                    hasrun[int(line.split()[2][len(batch_job_code):])] = True
-            elif time_line:
-                real_time = line.strip()
-                real_time = int(real_time.split(":")[0])*60 + int(real_time.split(":")[1])
 
 
         for it, t in enumerate(tasks_per_job):
@@ -1060,6 +1054,7 @@ def highly_parallel_job_manager(options, exec_filename,
             build_envroot=gen_env_root_dir,
             only_gather=only_gather
         )
+        gc.collect()
 
         # Create local manager script that does the mpiq job, launchable on each node. It checks the situation regularly each 10 secs.
         tasks_per_job, tmp_log_txt = create_manager_scripts(
@@ -1086,6 +1081,7 @@ def highly_parallel_job_manager(options, exec_filename,
             only_gather=only_gather
         )
         log_txt += tmp_log_txt
+        gc.collect()
 
         if env_instr:
             snapshot = take_snapshot(
@@ -1116,8 +1112,11 @@ def highly_parallel_job_manager(options, exec_filename,
             fs_locations, 
             tasks_per_job, 
             waiting_time,
+            data_transfer_protocol,
+            locout_dir,
             only_gather=only_gather
         )
+        gc.collect()
 
 
         # Collect results, update job_data (only processes that remained pending on running are written in job_data again
@@ -1140,6 +1139,7 @@ def highly_parallel_job_manager(options, exec_filename,
         if outp:
             for x in outp:
                 output_paths[x] = outp[x]
+        gc.collect()
 
     run_log_fn = cache_dir + 'run.log'
     with open(run_log_fn, 'w') as rf:
