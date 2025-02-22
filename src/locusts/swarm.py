@@ -1,3 +1,4 @@
+from locusts.__init__ import __version__
 from locusts.manager import *
 
 def define_options():
@@ -20,7 +21,7 @@ def define_options():
     options['data_transfer_protocol'], options['TYPES']['data_transfer_protocol'] = os.path.dirname(os.path.realpath(__file__)) + "/data_transfer_protocol.sh", str
     options['email_address'], options['TYPES']['email_address'] = "", str
     options['nodewise_scratch_folder'], options['TYPES']['nodewise_scratch_folder'] = "", str
-    options['nodewise_scratch_memory'], options['TYPES']['nodewise_scratch_memory'] = "", str
+    options['nodewise_scratch_space'], options['TYPES']['nodewise_scratch_space'] = "", str
     options['walltime'], options['TYPES']['walltime'] = "24:00:00", str
     options['extra_outer_statements'], options['TYPES']['extra_outer_statements'] = "", str
     options['partition'], options['TYPES']['partition'] = "", str
@@ -31,6 +32,8 @@ def define_options():
     options['memory'], options['TYPES']['memory'] = '', str
     options['memory_per_cpu'], options['TYPES']['memory_per_cpu'] = '', str
     options['only_gather'], options['TYPES']['only_gather'] = False, bool
+    options['batch_size'], options['TYPES']['batch_size'] = 10000, int
+    options['staggered'], options['TYPES']['staggered'] = False, bool
     return options
 
 
@@ -135,14 +138,19 @@ def create_exec_file(env_type, command_template, exec_filename, data):
         ) = data 
 
         with open(exec_filename, "w") as exec_file:
+            if shared_inputs:
+                shls = ' '.join([x.replace(":", ":"+indir) for x in shared_inputs])
+                exec_file.write('S:\t{0}\n'.format(shls))
             for ip, idx in enumerate(id_list):
                 exec_file.write(('c{0}:\t{1}\n'.format(str(ip).zfill(6), command_template.replace("<id>", idx)))) 
                 if inputs_for_clean_environment:
                     inls = ' '.join([indir + x.replace("<id>", idx) for x in inputs_for_clean_environment])
                     exec_file.write('i{0}:\t{1}\n'.format(str(ip).zfill(6), inls))
+                """
                 if shared_inputs:
                     shls = ' '.join([x.replace("<id>", idx).replace(":", ":"+indir) for x in shared_inputs])
                     exec_file.write('s{0}:\t{1}\n'.format(str(ip).zfill(6), shls))
+                """
                 ols = ' '.join([x.replace("<id>", idx) for x in output_filename_templates])
                 exec_file.write('o{0}:\t{1}\n'.format(str(ip).zfill(6), ols))
 
@@ -194,6 +202,8 @@ def create_exec_file(env_type, command_template, exec_filename, data):
 
 def launch(indir=None, outdir=None, code=None, spcins=None, shdins=None, locdir=None,
         outs=None, cmd=None, args=None, envroot=None, envfs=None, parf=None):
+
+    print("Locusts v.{0}\n\n".format(__version__))
 
     # Check 3 compulsory args
     if not (code and cmd and parf):

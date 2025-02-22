@@ -2,7 +2,9 @@
 
 all_scripts :
 	important_script.sh
-	helper_scripts : * 
+	yep :
+	helper_scripts : *
+		.* 
 important_files : *.txt
 	! big_file.txt
 other_files_1 :

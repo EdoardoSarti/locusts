@@ -11,3 +11,9 @@ partition		norm
 
 ### Local multithreading
 number_of_processors	4			# Number of processors to use on the local machine
+
+### Singularity
+#singularity             singularity
+#singularity_container  /data/local/encompass/dev/Ubuntu1804-EncoMPASS.sif   # Local
+#singularity_container   /data/sartie/Ubuntu1804-EncoMPASS.sif   # Remote
+#singularity_modload     module load singularity

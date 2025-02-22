@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=<cpuspertask>
 #SBATCH --ntasks-per-core=<taskspercore>
 <turnonconstraint>#SBATCH --constraint=<constraint>
-<turnonnodescratch>#SBATCH --gres=<nodescratchfolder>:<nodescratchmem>
+<turnonnodescratch>#SBATCH --gres=<nodescratchfolder>:<nodescratchspace>
 <turnonmailtype>#SBATCH --mail-type=<mailtype>
 <turnonemailaddress>#SBATCH --mail-user=<emailaddress>
 #SBATCH --output=<outpath>

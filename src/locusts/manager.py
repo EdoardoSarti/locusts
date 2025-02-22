@@ -16,7 +16,7 @@ def create_exec_file(id_list, command_template, indir, outdir, output_filename_t
             exec_file.write('o{0}:\t{1}\n'.format(str(ip).zfill(6), ols))
 
 
-def check_remote_path(remote_machine, root_path):
+def check_remote_path(remote_machine, root_path, inverse=False):
     """Checks existence of parent folder of remote root path
     and non-existence of remote root path itself"""
 
@@ -30,15 +30,21 @@ def check_remote_path(remote_machine, root_path):
         print(lsdirup)
         exit(1)
     # If root path already there, error: you must delete it yourself
-    elif "ls: cannot access" not in lsdir: # If ls on the exec directory does not give error
+    elif "ls: cannot access" not in lsdir and (not inverse): # If ls on the exec directory does not give error
         print(('Exec path {0} is already present in remote location {1}\n'
             'No permission to overwrite it, please delete it manually.') \
             .format(root_path, remote_machine))
         print('ssh {1} rm -rf {0}'.format(root_path, remote_machine))
         exit(1)
+    elif "ls: cannot access" in lsdir and inverse:
+        print(('Exec path {0} is not present in remote location {1}\n'
+            'Rerun cannot start.')\
+            .format(root_path, remote_machine))
+        exit(1)
 
-def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_path, batch_job_code, 
-        data_transfer_protocol, batch_size=10000, env_instr=None, build_envroot=None, only_gather=False):
+def generate_exec_filesystem(protocol_triad, cache_dir, job_data, shared_data, runtime_root_path, 
+        batch_job_code, data_transfer_protocol, env_instr=None, build_envroot=None, 
+        only_gather=False):
     
     devnull = open('/dev/null', 'w')
 
@@ -103,33 +109,46 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
     shared = {}
     # Step 2: create Shared sub-filesystem -------------------
     for jdi, jd in enumerate(job_data):
-        batchno = jdi // batch_size
-        # QUI QUI QUI
-        #print(jdi)
-        #print(jdi, jd)
-        #print(task_folders)
-        #print()
         replacements = {}
-
-        for skey in jd['shared_inps']:
+        for skey in jd['shared_inps']:  # dictionary of skey->couples (sbid, path) where sbid is the batch dir index
             if skey not in shared:
                 # Create local batch dir, and copy file there
-                batchisp = (len(shared) + 1)//batch_size
-                build_shbatch_folder = build_shared_path + 'batch_' + str(batchisp) + '/'  # NOTICE: build_shared_path is local
+                sbid = jd['shared_inps'][skey][0]
+                build_shbatch_folder = build_shared_path + 'batch_' + str(sbid) + '/'  # NOTICE: build_shared_path is local
                 if not os.path.exists(build_shbatch_folder):
                     os.mkdir(build_shbatch_folder)
-                build_shdest_path = build_shbatch_folder + os.path.basename(jd['shared_inps'][skey])
-                shutil.copyfile(jd['shared_inps'][skey], build_shdest_path)
+                build_shdest_path = build_shbatch_folder + os.path.basename(jd['shared_inps'][skey][1])
+                shutil.copyfile(jd['shared_inps'][skey][1], build_shdest_path)
 
                 # Runtime shared destination dir name
                 runtime_shdest_path = (fs_locations["runtime_shared"]
-                        + 'batch_' + str(batchisp) + '/' + os.path.basename(jd['shared_inps'][skey]))
+                        + 'batch_' + str(sbid) + '/' + os.path.basename(jd['shared_inps'][skey][1]))
 
-                shared[skey] = batchisp  # shared folder path at execution time
+                shared[skey] = sbid  # shared folder path at execution time
             else:
                 runtime_shdest_path = (fs_locations["runtime_shared"]
-                        + 'batch_' + str(shared[skey]) + '/' + os.path.basename(jd['shared_inps'][skey]))
+                        + 'batch_' + str(shared[skey]) + '/' + os.path.basename(jd['shared_inps'][skey][1]))
             replacements["<shared>"+skey] = runtime_shdest_path
+
+    for skey in shared_data:
+        # TO DO FUNCTION
+        # Duplicate code (see above)
+        if skey not in shared:
+            sbid = shared_data[skey][0]
+            build_shbatch_folder = build_shared_path + 'batch_' + str(sbid) + '/'
+            if not os.path.exists(build_shbatch_folder):
+                os.mkdir(build_shbatch_folder)
+            build_shdest_path = build_shbatch_folder + os.path.basename(shared_data[skey][1])
+            shutil.copyfile(shared_data[skey][1], build_shdest_path)
+
+            runtime_shdest_path = (fs_locations["runtime_shared"]
+                    + 'batch_' + str(sbid) + '/' + os.path.basename(shared_data[skey][1]))
+
+            shared[skey] = sbid
+        else:
+            runtime_shdest_path = (fs_locations["runtime_shared"]
+                    + 'batch_' + str(shared[skey]) + '/' + os.path.basename(shared_data[skey][1]))
+        replacements["<shared>"+skey] = runtime_shdest_path
 
     if protocol == 'remote' and (not env_and_do_not_replicate) and (not only_gather):
         check_remote_path(remote_machine, fs_locations["runtime_root"])
@@ -139,12 +158,12 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         # Replace tags in instruction file lines
         #  Choose replacement whether it is in remote or in local
         if protocol == "remote":
-            mkdircmd, copycmd = "mkdir", "cp"
+            mkdircmd, copycmd = "mkdir", "rsync -a --no-perms --no-g --chmod=ugo=rwX"  ###!
             runtime_envroot_cp = fs_locations["build_work"]
             runtime_envroot_mkdir = fs_locations["build_work"]
             workpath = fs_locations["runtime_work"]
         elif protocol == 'remote-sharedfs':
-            mkdircmd, copycmd = "mkdir", "cp"
+            mkdircmd, copycmd = "mkdir", "rsync -a --no-perms --no-g --chmod=ugo=rwX"  ###!
             runtime_envroot_cp = fs_locations["runtime_work"]
             runtime_envroot_mkdir = fs_locations["runtime_work"]
             workpath = fs_locations["runtime_work"]
@@ -195,13 +214,11 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
         runtime_task_dir = runtime_cache + 'tasks/'
         os.mkdir(build_task_dir)
         for jdi, jd in enumerate(job_data):
-            batchno = jdi // batch_size
-
             # Create local task folders and copy clean env files
-            build_batch_folder = build_task_dir + 'batch_' + str(batchno) + '/'
+            build_batch_folder = build_task_dir + 'batch_' + str(jd['batchno']) + '/'
             if not os.path.exists(build_batch_folder):
                 os.mkdir(build_batch_folder)
-            runtime_batch_folder = runtime_task_dir + 'batch_' + str(batchno) + '/'
+            runtime_batch_folder = runtime_task_dir + 'batch_' + str(jd['batchno']) + '/'
             build_task_path = build_batch_folder + 'task_' + jd['unique_code'] + '.sh'
             runtime_task_path = runtime_batch_folder + 'task_' + jd['unique_code'] + '.sh'
             task_folders[jd['unique_code']] = (runtime_batch_folder, os.path.basename(runtime_task_path))
@@ -219,19 +236,14 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
 
     else:  # "locusts" mode: optimized environment for parallel and safe execution
     
-        # Batch folders for every 10000 tasks
-        for i in range(len(job_data)//batch_size + 1):
-            batch_folder = fs_locations["build_work"] + 'batch_' + str(i) + '/'
-            if not os.path.exists(batch_folder):
-                os.mkdir(batch_folder)
-    
         # Job folders for individual tasks
         for jdi, jd in enumerate(job_data):
-            batchno = jdi // batch_size
-    
             # Work sub-environment --------------------------------------------
             # Create local task folders and copy clean env files
-            job_folder = fs_locations["build_work"] + 'batch_' + str(batchno) + '/' + 'task_' + jd['unique_code'] + '/'
+            batch_folder = fs_locations["build_work"] + 'batch_' + str(jd['batchno']) + '/'
+            if not os.path.exists(batch_folder):
+                os.mkdir(batch_folder)
+            job_folder = batch_folder + 'task_' + jd['unique_code'] + '/'
             if not os.path.exists(job_folder):
                 os.mkdir(job_folder)
             for fpath in jd['clean_env_inps']:
@@ -250,20 +262,20 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, runtime_root_p
 
             # Runtime paths for task folders
             rem_jf = (fs_locations["runtime_work"] + 'batch_'
-                    + str(batchno) + '/' + 'task_' + jd['unique_code'] + '/')
+                    + str(jd['batchno']) + '/' + 'task_' + jd['unique_code'] + '/')
             task_folders[jd['unique_code']] = (rem_jf, "task.sh")
             if DEBUG:
                 print("SIZE", jdi, get_obj_size(task_folders))
 
     return task_folders, fs_locations
 
-
 def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
         cpus_per_node, requested_nodes, batch_job_code, fs_locations, 
         data_transfer_protocol, singinfo=(None, None, None), task_cd=None,
         email_address="", email_type="ALL", tasks_per_core=1, min_stack_per_core=10,
-        constraint='', nodescratch_folder="", nodescratch_mem="", walltime="24:00:00",
-        outer_statements="", exclusive=False, mem='', mempercpu='', only_gather=False):
+        constraint='', nodescratch_folder="", nodescratch_space="", walltime="24:00:00",
+        outer_statements="", exclusive=False, mem='', mempercpu='', only_gather=False, 
+        staggered=False):
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
@@ -278,12 +290,12 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
         else: 
             turnon_mailtype, turnon_email_address = "", ""
 
-    if nodescratch_folder and nodescratch_mem:
+    if nodescratch_folder and nodescratch_space:
         turnon_nodescratch = ""
-    elif (not nodescratch_folder) and (not nodescratch_mem):
+    elif (not nodescratch_folder) and (not nodescratch_space):
         turnon_nodescratch = "#"
     else:
-        print(("ERROR (manager): -nodescratch_folder and -nodescratch_mem options"
+        print(("ERROR (manager): -nodescratch_folder and -nodescratch_space options"
              "must be either both present or absent"))
         exit(1)
 
@@ -350,6 +362,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
         tasks_per_node = tasks_per_node_list[jobid]
         ik = sum(tasks_per_node_list[:jobid])
         tfname = 'taskfile_{0}{1}'.format(batch_job_code, str(jobid).zfill(3))
+        enable_staggered = "" if staggered else "#" 
         task_filename = fs_locations["runtime_exec"] + '{0}.txt'.format(tfname)
         outpath = fs_locations["runtime_exec"] + '{0}.out.txt'.format(tfname)
         errpath = fs_locations["runtime_exec"] + '{0}.err.txt'.format(tfname)
@@ -367,7 +380,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
                 .replace('<taskspercore>', str(tasks_per_core)) \
                 .replace('<turnonnodescratch>', turnon_nodescratch) \
                 .replace('<nodescratchfolder>', nodescratch_folder) \
-                .replace('<nodescratchmem>', nodescratch_mem) \
+                .replace('<nodescratchspace>', nodescratch_space) \
                 .replace('<turnonmailtype>', turnon_mailtype) \
                 .replace('<mailtype>', email_type) \
                 .replace('<turnonemailaddress>', turnon_email_address) \
@@ -379,12 +392,13 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
                 .replace('<errpath>', errpath) \
                 .replace('<taskfile>', task_filename) \
                 .replace('<exedir>', fs_locations["runtime_exec"]) \
+                .replace('<staggered>', enable_staggered) \
                 .replace('<partition>', partition) \
                 .replace('<main_path>', fs_locations["runtime_root"]) \
                 .replace('<extra_outer_statements>', outer_statements) \
                 .replace('<singularity_module_load>', singmodload) \
                 .replace('<singularity_command>', singularitycmd) \
-                .replace('<inner_manager>', "inner_manager_{0}{1}.slurm".format(batch_job_code, str(jobid).zfill(3))) \
+                .replace('<inner_manager>', "inner_manager_{0}{1}.sh".format(batch_job_code, str(jobid).zfill(3))) \
                 .replace('<turnonmem>', turnon_mem) \
                 .replace('<mem>', mem) \
                 .replace('<turnonmempercpu>', turnon_mempercpu) \
@@ -393,7 +407,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
             # Write manager file and give it exe privilege
             manager_filename = (
                 fs_locations["build_exec"] + prefmng
-                + 'manager_{0}{1}.slurm'.format(batch_job_code, str(jobid).zfill(3))
+                + 'manager_{0}{1}.sh'.format(batch_job_code, str(jobid).zfill(3))
             )
             with open(manager_filename, 'w') as mf:
                 mf.write(text)
@@ -441,10 +455,16 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
         cmf.write("\n".join(manager_cmd))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'periodic_check.sh'])
     with open(fs_locations["build_exec"] + 'submit.sh', 'w') as sf:
+        sf.write("rm {0}/submit.log\n".format(fs_locations["runtime_exec"]))
         for job_id, task_list in tasks_per_job:
-            sf.write("sbatch {0}/outer_manager_{1}{2}.slurm\n".format(fs_locations["runtime_exec"],
+            sf.write("RES=$(sbatch {0}/outer_manager_{1}{2}.sh)\necho \"{1}{2} ${{RES##* }}\" >> {0}/submit.log\n".format(fs_locations["runtime_exec"],
                 batch_job_code, str(job_id).zfill(3)))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'submit.sh'])
+    with open(fs_locations["build_exec"] + 'submit_status.sh', 'w') as sf:
+        sf.write("rm {0}/submit_status.log\n".format(fs_locations["runtime_exec"]))
+        #sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`/usr/local/bin/dashboard_cli ${{x}} | grep -A1 partition | awk 'NR==2{{print $3}}'` &\n\tsleep 10\n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone\n".format(fs_locations["runtime_exec"]))
+        sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`jobhist ${{x}} | grep -A1 Partition | awk 'NR==2{{print $3}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone &>> {0}/submit_status.err\n".format(fs_locations["runtime_exec"]))
+    subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'submit_status.sh'])
 
     if protocol == 'remote':
         cpall_cmd = ["bash", data_transfer_protocol, fs_locations["build_root"], "{0}:{1}".format(remote_machine, fs_locations["runtime_root"])]
@@ -471,16 +491,17 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
+    NOCACHE_COUNT_THR = 5
 
     if not only_gather:
         if protocol != 'local':
             chk_cmd = [
                 "ssh",
                 remote_machine,
-                "sleep 60;",
                 "bash",
                 fs_locations["runtime_exec"] + 'submit.sh'
             ]
+            time.sleep(40)
             if DEBUG:
                 print("COMMAND", " ".join(chk_cmd))
                 p = subprocess.Popen(chk_cmd)
@@ -489,12 +510,14 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                     stderr=devnull,
                     stdout=devnull
                 )
+            p.wait()
+            time.sleep(20)
         else:
             # If no hpc, there is only one node, i.e. one manager
-            mname = 'outer_manager_{0}{1}.slurm'.format(batch_job_code, str(0).zfill(3))
+            mname = 'outer_manager_{0}{1}.sh'.format(batch_job_code, str(0).zfill(3))
             nhp_cmd = ["nohup", fs_locations["runtime_exec"] + mname]
             if DEBUG:
-                print("COMMAND", nhp_cmd)
+                print("COMMAND", " ".join(nhp_cmd))
                 p = subprocess.Popen(nhp_cmd)
             else:
                 p = subprocess.Popen(nhp_cmd,
@@ -514,7 +537,10 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
     hasrun = {job_id : False for job_id, task_list in tasks_per_job}
     sc, wc = 0, 0
     first_time = True
+    nocache_count = 0
+    no_entry = False
     while not is_over:
+        print("\n\n\n\nTEST cycle top\n\n\n\n")
         status = {job_id : '' for job_id, task_list in tasks_per_job}
         if not (only_gather and first_time):
             time.sleep(waiting_time)
@@ -530,105 +556,134 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                 time_end[job_id] = time.time()
 
         if protocol != 'local':
-            manager_cmd = ["ssh", remote_machine, "bash", fs_locations["runtime_exec"] + 'periodic_check.sh']
-            smallscp_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"] + 'periodic_check.log.txt'), log_folder]
+            jh_cmd = ["ssh", "-t", remote_machine, "bash", fs_locations["runtime_exec"] + 'submit_status.sh']
+            jhcp_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"] + 'submit_status.log'), log_folder]
+            jhcp2_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"] + 'submit.log'), log_folder]
         else:
-            manager_cmd = ["bash", fs_locations["build_exec"] + 'periodic_check.sh']
-            smallscp_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'periodic_check.log.txt'), log_folder]
+            jh_cmd = ["bash", fs_locations["build_exec"] + 'submit_status.sh']
+            jhcp_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'submit_status.log'), log_folder]
+            jhcp2_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'submit.log'), log_folder]
 
         if DEBUG:
-            print("COMMAND", manager_cmd)
+            print("COMMAND", " ".join(jh_cmd))
             p = subprocess.Popen(
-                manager_cmd,
+                jh_cmd,
                 stdout=subprocess.PIPE
             )
         else:
             p = subprocess.Popen(
-                manager_cmd, 
-                stderr=devnull, 
+                jh_cmd,
+                stderr=devnull,
                 stdout=subprocess.PIPE
            )
         p.wait()
+        time.sleep(30)
         if DEBUG:
-            print("COMMAND", smallscp_cmd)
+            print("COMMAND", " ".join(jhcp_cmd))
             p = subprocess.Popen(
-                smallscp_cmd,
+                jhcp_cmd,
                 stdout=subprocess.PIPE
             )
         else:
             p = subprocess.Popen(
-                smallscp_cmd, 
-                stderr=devnull, 
+                jhcp_cmd,
+                stderr=devnull,
                 stdout=subprocess.PIPE
            )
         p.wait()
+        time.sleep(30)
+        if DEBUG:
+            print("COMMAND", " ".join(jhcp2_cmd))
+            p = subprocess.Popen(
+                jhcp2_cmd,
+                stdout=subprocess.PIPE
+            )
+        else:
+            p = subprocess.Popen(
+                jhcp2_cmd,
+                stderr=devnull,
+                stdout=subprocess.PIPE
+           )
+        p.wait()
+ 
+        all_completed = True
+        resubmit_IDs = []
+        if protocol == "local":
+            prefix = fs_locations["runtime_exec"]
+        else:
+            prefix = log_folder
+        with open(prefix + "/submit_status.log") as ssf:
+            for fline in ssf:
+                if fline.strip():
+                    print(fline.strip())
+                    fields = fline.split()
+                    # There can be lines with empty status (for which len(fields) == 1)
+                    # List all reasons for 
+                    if not only_gather and not (len(fields) <2 or fields[1] == "COMPLETED" or fields[1] == "CANCELLED" or fields[1] == "TIMEOUT" or fields[1] == "NODE_FAIL" or fields[1] == "FAILED"):
+                        all_completed = False
+                        nocache_count += 1
+                        if len(fields)==2 and (fields[1] == "NODE_FAIL" or fields[1] == "TIMEOUT"):
+                            resubmit_IDs.append(fields[0])
+        time.sleep(10)
+        id_to_jobname = {}
+        with open(prefix + "/submit.log") as ssf:
+            for fline in ssf:
+                if fline.strip():
+                    fields = fline.split()
+                    id_to_jobname[fields[1]] = fields[0]
 
-        mng_lines, mac_lines, status_lines, time_line = False, False, False, False
-        mng_times, mac_names = [], []
-        with open(log_folder + '/periodic_check.log.txt') as logf:
-            print("OPENING", log_folder + '/periodic_check.log.txt')
-            for line in logf:
-                if not line.strip():
-                    continue
-                if line == "MANAGERS":
-                    mng_lines = True
-                    continue
-                elif line == "MACNAMES":
-                    mng_lines = False
-                    mac_lines = True
-                    continue
-                elif line == "STATUS":
-                    mac_lines = False
-                    status_lines = True
-                    continue
-                elif line == "TIME":
-                    status_lines = False
-                    time_line = True
-                    continue
-                if mng_lines:
-                    mng_times.append(line.strip())
-                elif mac_lines:
-                    mac_names.append(line.strip()) 
-                elif status_lines:
-#                    print(line)
-                    if line.split()[2] in [batch_job_code + str(x[0]).zfill(3) for x in tasks_per_job]:
-#                        print("YE", line)
-                        status[int(line.split()[2][len(batch_job_code):])] = line.split()[4]
-                        hasrun[int(line.split()[2][len(batch_job_code):])] = True
-                elif time_line:
-                    real_time = line.strip()
-                    real_time = int(real_time.split(":")[0])*60 + int(real_time.split(":")[1])
-            if not (mng_times and mac_names):
-                print("STILL NO CACHE FILES...")
-                continue
+        resubmit_jobnames = []
+        for i in resubmit_IDs:
+            resubmit_jobnames.append(id_to_jobname[i])
 
+        if resubmit_jobnames:
+            if protocol != 'local':
+                rsb_cmd = 'ssh -t {0} grep "'.format(remote_machine) + "\|".join(resubmit_jobnames) + '" {0}/submit.sh > {0}/resubmit.sh'.format(fs_locations["build_exec"])
 
-        for it, t in enumerate(tasks_per_job):
-            job_id, task_list = t
-
-            if len(mng_times[it].split()) == 1:
-                job_times[job_id] = int(mng_times[it].split(":")[0])*60 + int(mng_times[it].split(":")[1])
-#            else:
-#                print("WARNING: missing manager", it, job_id, mng_times[it])
-
-            if len(mac_names[it].split()) == 1:
-                machine_names[job_id] = mac_names[it]
-#            else:
-#                print("WARNING: missing machine name", it, job_id, mac_names[it])
-
-            if status[job_id]:
-                print(job_id, "Status:", status[job_id])
-                is_over = False
-            elif not hasrun[job_id]:
-                print(job_id, "Waiting to be queued ({0}/3)".format(wc+1))
-                wc += 1
-                if wc > 3:
-                    print(job_id, "Abort")
+                if DEBUG:
+                    print("COMMAND", " ".join(rsb_cmd))
+                    p = subprocess.Popen(
+                        rsb_cmd,
+                        stdout=subprocess.PIPE
+                    )
                 else:
-                    is_over = False
+                    p = subprocess.Popen(
+                        rsb_cmd,
+                        stderr=devnull,
+                        stdout=subprocess.PIPE
+                    )
+                p.wait()
+                time.sleep(40)
+
+                chk_cmd = [
+                "ssh",
+                remote_machine,
+                "bash",
+                fs_locations["runtime_exec"] + 'resubmit.sh'
+                ]
+                if DEBUG:
+                    print("COMMAND", " ".join(chk_cmd))
+                    p = subprocess.Popen(chk_cmd)
+                else:
+                    p = subprocess.Popen(chk_cmd,
+                        stderr=devnull,
+                        stdout=devnull
+                    )
+                p.wait()
+                time.sleep(20)
+                all_completed = False
+
+                print("Resubmitting jobs", resubmit_jobnames)
             else:
-                print(job_id, "End")
-                time_end[job_id] = job_times[job_id]
+                pass
+
+
+        if not (all_completed): #and (nocache_count < NOCACHE_COUNT_THR):
+            print("Incomplete jobs are present. Check number", nocache_count)
+            is_over = False
+            continue
+        else:
+            print("All jobs have been completed")
 
     log_txt = "\n\n#LOCUSTS JOBS LOG\n"
     time_now = time.time()
@@ -676,7 +731,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
     # Check if some job did not even start and adds it to the reschedule set 
     reschedule = set()
     for job_id, task_list in tasks_per_job:
-        # Move the mail exec task files to logs/
+        # Move the main exec task files to logs/
         tfname = "taskfile_{0}{1}.*".format(batch_job_code, str(job_id).zfill(3))
         task_filename = fs_locations["build_exec"] + tfname
         mv_cmd = "mv {0} {1}".format(task_filename, log_dir)
@@ -722,8 +777,10 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
             if status in ['running', 'pending']:
                 reschedule.add(task_id)
 
+    print("Reschedule these failed jobs:", reschedule)
+
     # For the jobs that have completed, checks the expected outputs
-    if not build_envroot:
+    if (build_envroot is None) or (not build_envroot):
         completed_with_error = set()
         output_paths = {}
         for jd in job_data:
@@ -790,8 +847,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
     
         # This will be the new job_data, containing all jobs that
         #  have to be rescheduled
-        output_d = { k['unique_code'] : k 
-            for k in job_data if k['unique_code'] in reschedule }
+        new_job_data = [ k for k in job_data if k['unique_code'] in reschedule ]
     
     elif snapshot:
 #        print("TAKE SNAPSHOT", protocol_triad, fs_locations['build_work'])
@@ -823,27 +879,29 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
                             p = subprocess.Popen(cpcmd, stdout=devnull, stderr=devnull)
                         p.wait()
 
-        output_d, output_paths, completed_with_error = {}, None, None
+        new_job_data, output_paths, completed_with_error = {}, None, None
 
     # Remove all repositories
     if not DEBUG:
-        if protocol != 'local':
-            sshrm_cmd = ["ssh", remote_machine, "rm", "-rf", fs_locations['runtime_root']]
-            if DEBUG:
-                print("COMMAND", sshrm_cmd)
-                p = subprocess.Popen(sshrm_cmd)
-            else:
+        if not new_job_data:
+            if protocol != 'local':
+                sshrm_cmd = ["ssh", remote_machine, "rm", "-rf", fs_locations['runtime_root']]
                 p = subprocess.Popen(sshrm_cmd, stderr=devnull, stdout=devnull)
-            p.wait()
-        rm_cmd = ["rm", "-rf", fs_locations['build_root']]
-        if DEBUG:
-            print("COMMAND", rm_cmd)
-            p = subprocess.Popen(rm_cmd)
-        else:
+                p.wait()
+            rm_cmd = ["rm", "-rf", fs_locations['build_root']]
             p = subprocess.Popen(rm_cmd, stderr=devnull, stdout=devnull)
-        p.wait()
+            p.wait()
+        else:
+            print("WARNING - only remove local and remote exec dirs", fs_locations['build_exec'], fs_locations['runtime_exec'])
+            if protocol != 'local':
+                sshrm_cmd = ["ssh", remote_machine, "rm", "-rf", fs_locations['runtime_exec']]
+                p = subprocess.Popen(sshrm_cmd, stderr=devnull, stdout=devnull)
+                p.wait()
+            rm_cmd = ["rm", "-rf", fs_locations['build_exec']]
+            p = subprocess.Popen(rm_cmd, stderr=devnull, stdout=devnull)
+            p.wait()
 
-    return output_d, output_paths, completed_with_error
+    return new_job_data, output_paths, completed_with_error
 
 def take_snapshot(protocol_triad, root_dir):
     protocol, remote_machine, hpc_shared_folder = protocol_triad
@@ -877,7 +935,7 @@ def take_snapshot(protocol_triad, root_dir):
             filename = filename.replace(root_dir,"")
             snapshot["::NEGLECT::"].append(filename)
         else:
-            print(("WARNING (take_snapshot): output of ls -ltrhR is not"
+            print(("WARNING (take_snapshot): output of ls -ltrhR is not "
                 "in the expected format"))
             print(line)
 
@@ -924,8 +982,12 @@ def highly_parallel_job_manager(options, exec_filename,
     singinfo = (options['singularity'], options['singularity_container'], options['singularity_modload'])
 
     # Read exec file and compile job_data
+    batch_size = options['batch_size']
     job_data = []
     jd = {}
+    jdi = -1
+    sharedwall = {}
+    totsharecount = []
     with open(exec_filename) as exec_file:
         for line in exec_file:
             if line.startswith("c"):
@@ -943,10 +1005,13 @@ def highly_parallel_job_manager(options, exec_filename,
                     'success' : None,
                     'issues' : [],
                     'unique_code' : '',
+                    'batchno' : '',
                     'log_filename' : '',
                     'clean_env_inps' : [],
-                    'shared_inps' : []
+                    'shared_inps' : {}
                 }
+                jdi += 1
+                jd['batchno'] = jdi // batch_size
                 jd['command'] = line[8:].strip()
                 fields = line.split()
                 jd['output_dir'] = locout_dir
@@ -958,11 +1023,31 @@ def highly_parallel_job_manager(options, exec_filename,
                 jd['clean_env_inps'] = fields[1:]
             elif line.startswith("s"):  # shared inputs must be declared in "s" line as file.txt:/path/of/file.txt, where file.txt is a filename appearing in the "c" line
                 fields = line.split()
-                jd['shared_inps'] = {k : p 
-                    for (k,p) in [x.split(":") for x in fields[1:]]}
+                for x in fields[1:]:
+                    k, pth = x.split(":")
+                    if pth in totsharecount:
+                        sbid = totsharecount.index(pth) // batch_size
+                    else:
+                        sbid = len(totsharecount) // batch_size   # should be len(x) +1 (for append) -1 (for index starting from 0)
+                        totsharecount.append(pth)
+                    jd['shared_inps'][k] = (sbid, pth)
             elif line.startswith("o"):
                 fields = line.split()
                 jd['outputs'] = fields[1:]
+            elif line.startswith("S"): # shared inputs that are common to all tasks. Only one S record is allowed in a file
+                fields = line.split()
+                if sharedwall:
+                    print("ERROR: more than one S record in file {0}"\
+                        .format(exec_filename))
+                    exit(1)
+                for x in fields[1:]:
+                    k, pth = x.split(":")
+                    if pth in totsharecount:
+                        sbid = (totsharecount.index(pth) + 1) // batch_size
+                    else:
+                        sbid = (len(totsharecount) + 1) // batch_size
+                        totsharecount.append(pth)
+                    sharedwall[k] = (sbid, pth)
         if jd:
             if os.path.exists(jd['log_filename']):
                 if options['force_redo']:
@@ -1007,10 +1092,12 @@ def highly_parallel_job_manager(options, exec_filename,
     else:
         env_root_dir, gen_env_root_dir = None, None
 
+    #print("ENV ROOT DIR", env_root_dir)
+
     data_transfer_protocol = options['data_transfer_protocol']
     email = options['email_address']
     nsf = options['nodewise_scratch_folder']
-    nsm = options['nodewise_scratch_memory']
+    nss = options['nodewise_scratch_space']
     wt = options['walltime']
     out_st = options['extra_outer_statements']
     partition = options['partition']
@@ -1021,32 +1108,38 @@ def highly_parallel_job_manager(options, exec_filename,
     memory = options['memory']
     memory_per_cpu = options['memory_per_cpu']
     only_gather = options['only_gather']
+    staggered = options['staggered']
 
-    log_txt = ("#RUN LOG\n\n"
-        "Run type (local / shared / remote) :\t{0}\n").format(protocol)
-    if protocol != 'local':
-        log_txt += ("Remote machine :\t{0}\n"
-            "Partition (queue) :\t{1}\n"
-            "Constraint (node type) :\t{2}\n"
-            "Number of reserved nodes :\t{3}\n"
-            "(Minimum) number of cores per node :\t{4}\n"
-            "Exclusive use of nodes :\t{5}\n"
-            "Tasks :\t{6}\n"
-            "Minimum number of tasks assigned per core :\t{7}\n"
-            "Wall time :\t{8}\n"
-            "Nodewise scratch folder :\t{9}\n"
-            "Nodewise scratch memory :\t{10}\n"
-        ).format(remote_machine, partition, constraint, requested_nodes, cpus_per_node, exclusive, len(job_data), task_stack, wt, nsf, nsm)   
-    else:
-        log_txt += "Number of local processors :\t{0}\n".format(cpus_per_node)
-    print(log_txt)
-
+    rerun = False
+    already_rescheduled = set()
     while job_data:
+        # Initial log
+        log_txt = ("#RUN LOG\n\n"
+            "Run type (local / shared / remote) :\t{0}\n").format(protocol)
+        if protocol != 'local':
+            log_txt += ("Remote machine :\t{0}\n"
+                "Partition (queue) :\t{1}\n"
+                "Constraint (node type) :\t{2}\n"
+                "Number of reserved nodes :\t{3}\n"
+                "(Minimum) number of cores per node :\t{4}\n"
+                "Exclusive use of nodes :\t{5}\n"
+                "Tasks :\t{6}\n"
+                "Minimum number of tasks assigned per core :\t{7}\n"
+                "Wall time :\t{8}\n"
+                "Nodewise scratch folder :\t{9}\n"
+                "Nodewise scratch space :\t{10}\n"
+            ).format(remote_machine, partition, constraint, requested_nodes, cpus_per_node, exclusive, len(job_data), task_stack, wt, nsf, nss)   
+        else:
+            log_txt += "Number of local processors :\t{0}\n".format(cpus_per_node)
+        print(log_txt)
+
         # Create the hosting file system
+        print('\n\n\n\nTEST generate_exec_filesystem\n\n\n\n')
         task_folders, fs_locations = generate_exec_filesystem(
             protocol_triad,
             cache_dir, 
-            job_data, 
+            job_data,
+            sharedwall, 
             runtime_root_path,
             batch_job_code,
             data_transfer_protocol,
@@ -1056,6 +1149,7 @@ def highly_parallel_job_manager(options, exec_filename,
         )
         gc.collect()
 
+        print('\n\n\n\nTEST create_manager_scripts\n\n\n\n')
         # Create local manager script that does the mpiq job, launchable on each node. It checks the situation regularly each 10 secs.
         tasks_per_job, tmp_log_txt = create_manager_scripts(
             protocol_triad,
@@ -1072,13 +1166,14 @@ def highly_parallel_job_manager(options, exec_filename,
             min_stack_per_core=task_stack,
             constraint=constraint,
             nodescratch_folder=nsf,
-            nodescratch_mem=nsm,
+            nodescratch_space=nss,
             walltime=wt,
             outer_statements=out_st,
             exclusive=exclusive,
             mem=memory,
             mempercpu=memory_per_cpu,
-            only_gather=only_gather
+            only_gather=only_gather,
+            staggered=staggered
         )
         log_txt += tmp_log_txt
         gc.collect()
@@ -1106,6 +1201,7 @@ def highly_parallel_job_manager(options, exec_filename,
             waiting_time = min(600, 10*(1+len(job_data)//min(lenlist)))
         if not only_gather:
             time.sleep(max(60,waiting_time))
+        print('\n\n\n\nTEST remote_job_control\n\n\n\n')
         log_txt += remote_job_control(
             protocol_triad,
             batch_job_code, 
@@ -1120,7 +1216,7 @@ def highly_parallel_job_manager(options, exec_filename,
 
 
         # Collect results, update job_data (only processes that remained pending on running are written in job_data again
-        job_data, outp, witherr = gather_results(
+        resc_job_data, outp, witherr = gather_results(
             protocol_triad,
             cache_dir, 
             job_data, 
@@ -1140,6 +1236,19 @@ def highly_parallel_job_manager(options, exec_filename,
             for x in outp:
                 output_paths[x] = outp[x]
         gc.collect()
+
+        this_rescheduling = []
+        if resc_job_data:
+            for k in resc_job_data:
+                if k['unique_code'] not in already_rescheduled:
+                    this_rescheduling.append(k)
+                    already_rescheduled.add(k['unique_code'])
+
+        if this_rescheduling:
+            job_data = this_rescheduling
+            rerun = True
+        else:
+            job_data = []
 
     run_log_fn = cache_dir + 'run.log'
     with open(run_log_fn, 'w') as rf:

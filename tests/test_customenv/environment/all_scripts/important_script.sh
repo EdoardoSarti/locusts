@@ -22,6 +22,9 @@ do
     fi
 done
 
+echo "HURRAY!" >> as_useless_3.sh 
+echo "HEYHEY!" >> helper_scripts/be_polite.sh
+
 NEWSUBDIR="${OUT_A}/logs"
 if [[ ! -d "${NEWSUBDIR}" ]]
 then
