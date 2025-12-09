@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name="<jobd><jobid>"
+#SBATCH --job-name="<jobid>-<jobd>"
 #SBATCH --time=<time>
 #SBATCH --partition=<partition>
 #SBATCH --cpus-per-task=<cpuspertask>

@@ -8,6 +8,7 @@ def define_options():
     options = {}
     options['TYPES'] = {}
     options['run_on_hpc'], options['TYPES']['run_on_hpc'] = False, bool
+    options['run_on_hpc_local'], options['TYPES']['run_on_hpc_local'] = False, bool
     options['host_name'], options['TYPES']['host_name'] = None, str
     options['requested_nodes'], options['TYPES']['requested_nodes'] = None, int
     options['cpus_per_node'], options['TYPES']['cpus_per_node'] = None, int

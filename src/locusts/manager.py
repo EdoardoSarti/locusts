@@ -76,6 +76,14 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, shared_data, r
         if not os.path.exists(localbuild_root_path):
             os.mkdir(localbuild_root_path)
         localbuild_root_path = os.path.abspath(localbuild_root_path) + '/'
+    elif protocol == "local-hpc":
+        # Locusts is run in local over the hcp. It still has to launch jobs
+        if not os.path.exists(runtime_root_path):
+             os.mkdir(runtime_root_path)
+        localbuild_root_path = runtime_root_path = os.path.abspath(runtime_root_path) + '/'
+    else:
+        print(f"Invalid protocol: {protocol}")
+        exit(1)
 
     # If the user provides the instruction file but not the local adress of the environment,
     #  he does not want to replicate the env (she thinks it is already in place)
@@ -167,12 +175,12 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, shared_data, r
             runtime_envroot_cp = fs_locations["runtime_work"]
             runtime_envroot_mkdir = fs_locations["runtime_work"]
             workpath = fs_locations["runtime_work"]
-        elif protocol == "local":
+        elif protocol == "local" or "local-hpc":
             workpath = build_envroot
 
         #  Read the instruction file, replace tags and execute
         workdir, instructions = parse_fs_tree(env_instr, build_envroot)
-        if protocol != 'local' and not env_and_do_not_replicate:
+        if protocol != 'local' and protocol != 'local-hpc' and not env_and_do_not_replicate:
             compiled_instructions = []
             for instr in instructions:
                 cmd = instr.replace("<build_envroot>", build_envroot) \
@@ -494,7 +502,23 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
     NOCACHE_COUNT_THR = 5
 
     if not only_gather:
-        if protocol != 'local':
+        if protocol == 'local-hpc':
+            chk_cmd = [
+                "bash",
+                fs_locations["runtime_exec"] + 'submit.sh'
+            ]
+            time.sleep(40)
+            if DEBUG:
+                print("COMMAND", " ".join(chk_cmd))
+                p = subprocess.Popen(chk_cmd)
+            else:
+                p = subprocess.Popen(chk_cmd,
+                    stderr=devnull,
+                    stdout=devnull
+                )
+            p.wait()
+            time.sleep(20)
+        elif protocol != 'local':
             chk_cmd = [
                 "ssh",
                 remote_machine,
@@ -555,7 +579,11 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
             if not chrono_on[job_id] and time_start[job_id]:
                 time_end[job_id] = time.time()
 
-        if protocol != 'local':
+        if protocol == 'local-hpc':
+            jh_cmd = ["bash", fs_locations["build_exec"] + 'submit_status.sh']
+            jhcp_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'submit_status.log'), log_folder]
+            jhcp2_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'submit.log'), log_folder]
+        elif protocol != 'local':
             jh_cmd = ["ssh", "-t", remote_machine, "bash", fs_locations["runtime_exec"] + 'submit_status.sh']
             jhcp_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"] + 'submit_status.log'), log_folder]
             jhcp2_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"] + 'submit.log'), log_folder]
@@ -608,7 +636,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
  
         all_completed = True
         resubmit_IDs = []
-        if protocol == "local":
+        if protocol == "local" or protocol == "local-hpc":
             prefix = fs_locations["runtime_exec"]
         else:
             prefix = log_folder
@@ -638,7 +666,11 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
 
         if resubmit_jobnames:
             if protocol != 'local':
-                rsb_cmd = 'ssh -t {0} grep "'.format(remote_machine) + "\|".join(resubmit_jobnames) + '" {0}/submit.sh > {0}/resubmit.sh'.format(fs_locations["build_exec"])
+                if protocol != 'local-hpc':
+                    ssh = 'ssh -t {0} '.format(remote_machine)
+                else:
+                    ssh = ''
+                rsb_cmd = '{0}grep "'.format(ssh) + "\|".join(resubmit_jobnames) + '" {0}/submit.sh > {0}/resubmit.sh'.format(fs_locations["build_exec"])
 
                 if DEBUG:
                     print("COMMAND", " ".join(rsb_cmd))
@@ -860,7 +892,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
         with open(snap_log, 'w') as snapf:
             # Creates all new folders
             for d in sorted(newly_added):
-                if protocol != 'local' and not os.path.exists(build_envroot+d):
+                if protocol != 'local' and protocol != 'local-hpc' and not os.path.exists(build_envroot+d):
                     snapf.write("Directory created: {0}\n".format(build_envroot+d))
                     os.mkdir(build_envroot+d)
 
@@ -868,7 +900,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
             for d in sorted(newly_added):
                 for f in sorted(newly_added[d]):
                     snapf.write("File created/modified: {0}\n".format(build_envroot+d+'/'+f))
-                    if protocol != 'local':
+                    if protocol != 'local' and protocol != 'local-hpc':
                         fname = fs_locations["build_work"] + d+'/'+f  # Local copies have been restored at the beginning of this function
                         cpcmd = ["cp", fname, build_envroot+d+'/'+f]
 #                        print("COMMAND", cpcmd)
@@ -884,7 +916,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
     # Remove all repositories
     if not DEBUG:
         if not new_job_data:
-            if protocol != 'local':
+            if protocol != 'local' and protocol != 'local-hpc':
                 sshrm_cmd = ["ssh", remote_machine, "rm", "-rf", fs_locations['runtime_root']]
                 p = subprocess.Popen(sshrm_cmd, stderr=devnull, stdout=devnull)
                 p.wait()
@@ -893,7 +925,7 @@ def gather_results(protocol_triad, cache_dir, job_data, batch_job_code,
             p.wait()
         else:
             print("WARNING - only remove local and remote exec dirs", fs_locations['build_exec'], fs_locations['runtime_exec'])
-            if protocol != 'local':
+            if protocol != 'local' and protocol != 'local-hpc':
                 sshrm_cmd = ["ssh", remote_machine, "rm", "-rf", fs_locations['runtime_exec']]
                 p = subprocess.Popen(sshrm_cmd, stderr=devnull, stdout=devnull)
                 p.wait()
@@ -1056,7 +1088,17 @@ def highly_parallel_job_manager(options, exec_filename,
             else:
                 job_data.append(jd)
 
-    if options['run_on_hpc']:
+    if options['run_on_hpc_local']:
+        protocol = 'local-hpc'
+        remote_exec_path = False
+        remote_machine = None
+        local_shared_folder = None
+        requested_nodes = options['requested_nodes']
+        cpus_per_node = options['cpus_per_node']
+        runtime_root_path = cache_dir + batch_job_code + "_tmp_root/"
+        if not os.path.exists(runtime_root_path):
+            os.mkdir(runtime_root_path)
+    elif options['run_on_hpc']:
         # Copy files in separate location (for hpc the option 'exec location' must be set to '/data/biowulf/sartie/'
         remote_machine = options['host_name']
         requested_nodes = options['requested_nodes']
