@@ -1,3 +1,5 @@
-include src/locusts/outer_template_manager.txt
-include src/locusts/inner_template_manager.txt
+include src/locusts/outer_template_manager_slurm.txt
+include src/locusts/inner_template_manager_slurm.txt
+include src/locusts/outer_template_manager_oar.txt
+include src/locusts/inner_template_manager_oar.txt
 include src/locusts/data_transfer_protocol.sh

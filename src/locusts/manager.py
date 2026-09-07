@@ -277,7 +277,7 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, shared_data, r
 
     return task_folders, fs_locations
 
-def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
+def create_manager_scripts(protocol_triad, cache_dir, task_folders, scheduler, partition,
         cpus_per_node, requested_nodes, batch_job_code, fs_locations, 
         data_transfer_protocol, singinfo=(None, None, None), task_cd=None,
         email_address="", email_type="ALL", tasks_per_core=1, min_stack_per_core=10,
@@ -287,6 +287,12 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
+
+    scheduler_submit = {"slurm" : "sbatch", "oar" : "oarsub -S"}
+    if scheduler not in scheduler_submit:
+        print("ERROR (manager): Unkwnown scheduler", scheduler)
+        exit(1)
+
 
     # Check consistency of parameters
     turnon_mailtype, turnon_email_address = "#", "#"
@@ -321,7 +327,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
         exit(1)
 
     # The location of the template file for the 1-node-manager script
-    outer_template_filename = os.path.dirname(os.path.realpath(__file__)) + '/outer_template_manager.txt'
+    outer_template_filename = os.path.dirname(os.path.realpath(__file__)) + f'/outer_template_manager_{scheduler}.txt'
     inner_template_filename = os.path.dirname(os.path.realpath(__file__)) + '/inner_template_manager.txt'
 
     # Is there singularity? Does it use a module?
@@ -465,13 +471,24 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
     with open(fs_locations["build_exec"] + 'submit.sh', 'w') as sf:
         sf.write("rm {0}/submit.log\n".format(fs_locations["runtime_exec"]))
         for job_id, task_list in tasks_per_job:
-            sf.write("RES=$(sbatch {0}/outer_manager_{1}{2}.sh)\necho \"{1}{2} ${{RES##* }}\" >> {0}/submit.log\n".format(fs_locations["runtime_exec"],
-                batch_job_code, str(job_id).zfill(3)))
+            if protocol == "local":
+                sf.write("RES=$({0} {1}/outer_manager_{2}{3}.sh & echo $!)\necho \"{2}{3} ${{RES##* }}\" >> {1}/submit.log\n".format("bash", fs_locations["runtime_exec"],
+                    batch_job_code, str(job_id).zfill(3)))
+            else:
+                if scheduler == "slurm":
+                    sf.write("RES=$({0} {1}/outer_manager_{2}{3}.sh)\necho \"{2}{3} ${{RES##* }}\" >> {1}/submit.log\n".format(scheduler_submit[scheduler], fs_locations["runtime_exec"],
+                      batch_job_code, str(job_id).zfill(3)))
+                elif scheduler == "oar":
+                    sf.write("{0} {1}/outer_manager_{2}{3}.sh >> {1}/outer_manager_{2}{3}.log\nJOB_ID=$(tail -n1 {1}/outer_manager_{2}{3}.log | awk -F\"=\" '{{print $2}}')\necho \"{2}{3} ${{JOB_ID}}\" >> {1}/submit.log\n".format(scheduler_submit[scheduler], fs_locations["runtime_exec"],
+                      batch_job_code, str(job_id).zfill(3)))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'submit.sh'])
     with open(fs_locations["build_exec"] + 'submit_status.sh', 'w') as sf:
         sf.write("rm {0}/submit_status.log\n".format(fs_locations["runtime_exec"]))
         #sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`/usr/local/bin/dashboard_cli ${{x}} | grep -A1 partition | awk 'NR==2{{print $3}}'` &\n\tsleep 10\n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone\n".format(fs_locations["runtime_exec"]))
-        sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`jobhist ${{x}} | grep -A1 Partition | awk 'NR==2{{print $3}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone &>> {0}/submit_status.err\n".format(fs_locations["runtime_exec"]))
+        if scheduler == "slurm": # Assumes the presence of the jobhist command
+            sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`jobhist ${{x}} | grep -A1 Partition | awk 'NR==2{{print $3}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone &>> {0}/submit_status.err\n".format(fs_locations["runtime_exec"]))
+        if scheduler == "oar": # Assumes lines of submit.log like this: JobName XXXX
+            sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`oarstat -s -j ${{x}} | awk '{{print $NF}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone &>> {0}/submit_status.err\n".format(fs_locations["runtime_exec"]))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'submit_status.sh'])
 
     if protocol == 'remote':
@@ -490,7 +507,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, partition,
     return tasks_per_job, log_txt
 
 
-def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_job,
+def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, tasks_per_job,
         waiting_time, data_transfer_protocol, log_folder, only_gather=False):
     # There must be a passwordless connection between the two machines: to
     # achieve it, ssh-agent and then ssh-add.
@@ -538,7 +555,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
             time.sleep(20)
         else:
             # If no hpc, there is only one node, i.e. one manager
-            mname = 'outer_manager_{0}{1}.sh'.format(batch_job_code, str(0).zfill(3))
+            mname = 'submit.sh'  #'outer_manager_{0}{1}.sh'.format(batch_job_code, str(0).zfill(3))
             nhp_cmd = ["nohup", fs_locations["runtime_exec"] + mname]
             if DEBUG:
                 print("COMMAND", " ".join(nhp_cmd))
@@ -588,7 +605,7 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
             jhcp_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"] + 'submit_status.log'), log_folder]
             jhcp2_cmd = ["bash", data_transfer_protocol, "{0}:{1}".format(remote_machine, fs_locations["runtime_exec"] + 'submit.log'), log_folder]
         else:
-            jh_cmd = ["bash", fs_locations["build_exec"] + 'submit_status.sh']
+            jh_cmd = ["bash", fs_locations["runtime_exec"] + 'submit_status.sh']
             jhcp_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'submit_status.log'), log_folder]
             jhcp2_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'submit.log'), log_folder]
 
@@ -647,11 +664,17 @@ def remote_job_control(protocol_triad, batch_job_code, fs_locations, tasks_per_j
                     fields = fline.split()
                     # There can be lines with empty status (for which len(fields) == 1)
                     # List all reasons for 
-                    if not only_gather and not (len(fields) <2 or fields[1] == "COMPLETED" or fields[1] == "CANCELLED" or fields[1] == "TIMEOUT" or fields[1] == "NODE_FAIL" or fields[1] == "FAILED"):
-                        all_completed = False
-                        nocache_count += 1
-                        if len(fields)==2 and (fields[1] == "NODE_FAIL" or fields[1] == "TIMEOUT"):
-                            resubmit_IDs.append(fields[0])
+                    if scheduler == "slurm":
+                        if not only_gather and not (len(fields) <2 or fields[1] == "COMPLETED" or fields[1] == "CANCELLED" or fields[1] == "TIMEOUT" or fields[1] == "NODE_FAIL" or fields[1] == "FAILED"):
+                            all_completed = False
+                            nocache_count += 1
+                            if len(fields)==2 and (fields[1] == "NODE_FAIL" or fields[1] == "TIMEOUT"):
+                                resubmit_IDs.append(fields[0])
+                    elif scheduler == "oar":
+                        if not only_gather and not (len(fields) <2 or fields[1] == "Terminated" or fields[1] == "Cancelled" or fields[1] == "Error"):
+                            all_completed = False
+                            nocache_count += 1
+
         time.sleep(10)
         id_to_jobname = {}
         with open(prefix + "/submit.log") as ssf:
@@ -1142,6 +1165,7 @@ def highly_parallel_job_manager(options, exec_filename,
     nss = options['nodewise_scratch_space']
     wt = options['walltime']
     out_st = options['extra_outer_statements']
+    scheduler = options['scheduler']
     partition = options['partition']
     exclusive = options['exclusive']
     task_stack = options['min_stack_per_core']
@@ -1179,9 +1203,9 @@ def highly_parallel_job_manager(options, exec_filename,
         print('\n\n\n\nTEST generate_exec_filesystem\n\n\n\n')
         task_folders, fs_locations = generate_exec_filesystem(
             protocol_triad,
-            cache_dir, 
+            cache_dir,
             job_data,
-            sharedwall, 
+            sharedwall,
             runtime_root_path,
             batch_job_code,
             data_transfer_protocol,
@@ -1195,11 +1219,12 @@ def highly_parallel_job_manager(options, exec_filename,
         # Create local manager script that does the mpiq job, launchable on each node. It checks the situation regularly each 10 secs.
         tasks_per_job, tmp_log_txt = create_manager_scripts(
             protocol_triad,
-            cache_dir, 
+            cache_dir,
             task_folders,
-            partition, 
-            cpus_per_node, 
-            requested_nodes, 
+            scheduler,
+            partition,
+            cpus_per_node,
+            requested_nodes,
             batch_job_code,
             fs_locations,
             data_transfer_protocol,
@@ -1246,7 +1271,8 @@ def highly_parallel_job_manager(options, exec_filename,
         print('\n\n\n\nTEST remote_job_control\n\n\n\n')
         log_txt += remote_job_control(
             protocol_triad,
-            batch_job_code, 
+            batch_job_code,
+            scheduler,
             fs_locations, 
             tasks_per_job, 
             waiting_time,

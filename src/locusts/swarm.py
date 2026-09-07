@@ -25,6 +25,7 @@ def define_options():
     options['nodewise_scratch_space'], options['TYPES']['nodewise_scratch_space'] = "", str
     options['walltime'], options['TYPES']['walltime'] = "24:00:00", str
     options['extra_outer_statements'], options['TYPES']['extra_outer_statements'] = "", str
+    options['scheduler'], options['TYPES']['scheduler'] = "slurm", str
     options['partition'], options['TYPES']['partition'] = "", str
     options['exclusive'], options['TYPES']['exclusive'] = False, bool
     options['constraint'], options['TYPES']['constraint'] = "", str
