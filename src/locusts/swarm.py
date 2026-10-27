@@ -36,6 +36,10 @@ def define_options():
     options['only_gather'], options['TYPES']['only_gather'] = False, bool
     options['batch_size'], options['TYPES']['batch_size'] = 10000, int
     options['staggered'], options['TYPES']['staggered'] = False, bool
+    options['stagger_time'], options['TYPES']['stagger_time'] = 300, int  # Seconds between task starts on the same node (if staggered)
+    options['diskspace_required'], options['TYPES']['diskspace_required'] = "", str  # E.g. 50G. If set, checks free space before running
+    options['checkquota_command'], options['TYPES']['checkquota_command'] = "checkquota", str
+    options['transfer_archive'], options['TYPES']['transfer_archive'] = False, bool  # Send the filesystem to remote as one tar.gz archive
     return options
 
 

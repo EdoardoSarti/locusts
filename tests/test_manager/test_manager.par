@@ -9,6 +9,11 @@ hpc_exec_dir        ~/locusts_try			# HPC path where the jobs will be executed a
 #local_shared_dir				# Do the HPC service and the local machine share a directory? If so, you can specify a shared folder to use
 scheduler   oar
 #data_transfer_protocol	tests/test_manager/data_transfer_protocol.sh
+#transfer_archive	True			# Send the filesystem to the remote as one tar.gz archive instead of single files
+#staggered		True			# Stagger the start times of the tasks launched together on the same node
+#stagger_time		300			# Seconds between two staggered task starts
+#diskspace_required	50G			# Before running, check there is at least this free space where hpc_exec_dir is
+#checkquota_command	checkquota		# Command reporting "<mount>: <used> <quota>" lines (falls back on df)
 
 ### Local multithreading
 number_of_processors	4			# Number of processors to use on the local machine

@@ -7,6 +7,7 @@ import time
 import shutil
 import datetime
 import subprocess
+import tarfile
 
 global DEBUG
 DEBUG = True if "--locusts-debug" in sys.argv else False

@@ -42,9 +42,83 @@ def check_remote_path(remote_machine, root_path, inverse=False):
             .format(root_path, remote_machine))
         exit(1)
 
+def parse_size(size_str):
+    """Converts a size string (e.g. 50G, 1.5TB, 200 MiB, 1024) into bytes.
+    A number without unit is read as bytes"""
+
+    units = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4, "P": 1024**5}
+    m = re.fullmatch(r"\s*([\d.]+)\s*([KMGTP]?)(I?B)?\s*", size_str.upper())
+    if not m:
+        print("ERROR (parse_size): cannot read size {0}".format(size_str))
+        exit(1)
+    return float(m.group(1)) * units[m.group(2)]
+
+def check_disk_space(protocol_triad, runtime_root_path, diskspace_required,
+        checkquota_command="checkquota"):
+    """Checks there are at least diskspace_required bytes free where the
+    runtime filesystem will be created. Free space is read from the output
+    of checkquota_command (lines like "/data:  58.9 GB  100.0 GB ...",
+    i.e. mount point, used space, quota). If the command is not available or
+    does not list the mount point, falls back on df"""
+
+    protocol, remote_machine, local_shared_folder = protocol_triad
+    ssh = ["ssh", remote_machine] if remote_machine and protocol != 'local-hpc' else []
+    required = parse_size(diskspace_required)
+
+    def run(cmd):
+        if ssh:
+            cmd = ssh + [cmd]
+        else:
+            cmd = ["bash", "-c", cmd]
+        if DEBUG:
+            print("COMMAND", " ".join(cmd))
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        return p.returncode, p.stdout.decode('utf-8', errors='replace')
+
+    # The root path might not exist yet: check its parent folder
+    parent = os.path.dirname(reduceslash(runtime_root_path + "/")[:-1])
+    rc, out = run("cd {0} && pwd -P".format(parent))
+    if rc != 0 or not out.strip():
+        print("ERROR (check_disk_space): path {0} not found".format(parent))
+        exit(1)
+    abs_parent = out.strip().splitlines()[-1] + "/"
+
+    # Look for the quota of the mount point containing the path (longest match)
+    available, mount = None, ""
+    rc, out = run(checkquota_command) if checkquota_command else (1, "")
+    if rc == 0:
+        for line in out.splitlines():
+            fields = line.split()
+            if not fields or not fields[0].startswith("/") or not fields[0].endswith(":"):
+                continue
+            mnt = reduceslash(fields[0][:-1] + "/")
+            sizes = re.findall(r"([\d.]+)\s*([KMGTP]?I?B)\b", line[len(fields[0]):].upper())
+            if len(sizes) < 2 or not abs_parent.startswith(mnt) or len(mnt) <= len(mount):
+                continue
+            used, quota = [parse_size(n + u) for n, u in sizes[:2]]
+            available, mount = quota - used, mnt
+
+    if available is None:
+        print(("WARNING (check_disk_space): {0} did not report a quota for {1}, "
+            "using df instead").format(checkquota_command, abs_parent))
+        rc, out = run("df -Pk {0}".format(abs_parent))
+        lines = out.strip().splitlines()
+        if rc != 0 or len(lines) < 2:
+            print("ERROR (check_disk_space): could not read free space of {0}".format(abs_parent))
+            exit(1)
+        available = int(lines[-1].split()[3]) * 1024
+
+    print("Disk space available in {0}: {1:.1f} GB (required: {2:.1f} GB)".format(
+        abs_parent, available / 1024**3, required / 1024**3))
+    if available < required:
+        print(("ERROR (check_disk_space): not enough disk space in {0}\n"
+            "Available: {1:.1f} GB\tRequired (diskspace_required): {2:.1f} GB").format(
+            abs_parent, available / 1024**3, required / 1024**3))
+        exit(1)
+
 def generate_exec_filesystem(protocol_triad, cache_dir, job_data, shared_data, runtime_root_path, 
         batch_job_code, data_transfer_protocol, env_instr=None, build_envroot=None, 
-        only_gather=False):
+        only_gather=False, rerun=False):
     
     devnull = open('/dev/null', 'w')
 
@@ -102,6 +176,22 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, shared_data, r
         "runtime_work" : runtime_root_path + batch_job_code + "/"
     }
 
+    # The shared folder is never cleaned by locusts: leftovers of a killed run
+    #  (e.g. .runningjobs_* and .donejobs_* files, old outputs) would corrupt the new run
+    #  (not when rescheduling or gathering, where the previous run's files are needed)
+    if protocol == 'remote-sharedfs' and (not rerun) and (not only_gather):
+        leftovers = [fs_locations["build_exec"]]
+        if not env_and_do_not_replicate:
+            leftovers.append(fs_locations["build_work"])
+        leftovers = [x for x in leftovers if os.path.exists(x)]
+        if leftovers:
+            print(('Files of a previous run are present in the local shared folder {0}\n'
+                '{1}\n'
+                'No permission to overwrite them, please delete them manually.') \
+                .format(localbuild_root_path, '\n'.join(leftovers)))
+            print('rm -rf {0}'.format(' '.join(leftovers)))
+            exit(1)
+
     # Step 1: create local versions of Shared, Exec and Work sub-environments ------------------------
     # Create main locations locally
     build_shared_path = fs_locations["build_shared"]
@@ -158,7 +248,8 @@ def generate_exec_filesystem(protocol_triad, cache_dir, job_data, shared_data, r
                     + 'batch_' + str(shared[skey]) + '/' + os.path.basename(shared_data[skey][1]))
         replacements["<shared>"+skey] = runtime_shdest_path
 
-    if protocol == 'remote' and (not env_and_do_not_replicate) and (not only_gather):
+    # When rescheduling, the remote root of the previous round is still there and is reused
+    if protocol == 'remote' and (not env_and_do_not_replicate) and (not only_gather) and (not rerun):
         check_remote_path(remote_machine, fs_locations["runtime_root"])
 
     # Step 3: create Work sub-filesystem: "custom" or "locusts" mode -------------------
@@ -283,7 +374,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, scheduler, p
         email_address="", email_type="ALL", tasks_per_core=1, min_stack_per_core=10,
         constraint='', nodescratch_folder="", nodescratch_space="", walltime="24:00:00",
         outer_statements="", exclusive=False, mem='', mempercpu='', only_gather=False, 
-        staggered=False):
+        staggered=False, stagger_time=300, transfer_archive=False):
 
     protocol, remote_machine, hpc_shared_folder = protocol_triad
     devnull = open('/dev/null', 'w')
@@ -407,6 +498,7 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, scheduler, p
                 .replace('<taskfile>', task_filename) \
                 .replace('<exedir>', fs_locations["runtime_exec"]) \
                 .replace('<staggered>', enable_staggered) \
+                .replace('<staggertime>', str(stagger_time)) \
                 .replace('<partition>', partition) \
                 .replace('<main_path>', fs_locations["runtime_root"]) \
                 .replace('<extra_outer_statements>', outer_statements) \
@@ -491,7 +583,10 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, scheduler, p
             sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`oarstat -s -j ${{x}} | awk '{{print $NF}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone &>> {0}/submit_status.err\n".format(fs_locations["runtime_exec"]))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'submit_status.sh'])
 
-    if protocol == 'remote':
+    if protocol == 'remote' and transfer_archive:
+        transfer_archive_to_remote(remote_machine, cache_dir, batch_job_code,
+            fs_locations, data_transfer_protocol)
+    elif protocol == 'remote':
         cpall_cmd = ["bash", data_transfer_protocol, fs_locations["build_root"], "{0}:{1}".format(remote_machine, fs_locations["runtime_root"])]
         if DEBUG:
             print("COMMAND", " ".join(cpall_cmd))
@@ -505,6 +600,40 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, scheduler, p
 
     # List of 2-tuples (job ID, [tasks IDs])
     return tasks_per_job, log_txt
+
+
+def transfer_archive_to_remote(remote_machine, cache_dir, batch_job_code,
+        fs_locations, data_transfer_protocol):
+    """Transfers the local build of the filesystem as a single tar.gz archive
+    and extracts it in the runtime root on the remote machine. Much faster
+    than copying single files when there are many small files"""
+
+    devnull = open('/dev/null', 'w')
+
+    # The archive is created in the cache, outside the build root it contains
+    archive_name = "{0}_transfer.tar.gz".format(batch_job_code)
+    local_archive = cache_dir + archive_name
+    with tarfile.open(local_archive, "w:gz") as tf:
+        tf.add(fs_locations["build_root"], arcname=".")
+
+    # The parent of the runtime root is known to exist (see check_remote_path)
+    runtime_root = fs_locations["runtime_root"]
+    remote_archive = os.path.dirname(runtime_root[:-1]) + "/." + archive_name
+    cp_cmd = ["bash", data_transfer_protocol, local_archive,
+        "{0}:{1}".format(remote_machine, remote_archive)]
+    untar_cmd = ["ssh", remote_machine,
+        "mkdir -p {0} && tar -xzf {1} -C {0} && rm -f {1}".format(runtime_root, remote_archive)]
+    for cmd in [cp_cmd, untar_cmd]:
+        if DEBUG:
+            print("COMMAND", " ".join(cmd))
+            p = subprocess.Popen(cmd)
+        else:
+            p = subprocess.Popen(cmd, stderr=devnull, stdout=devnull)
+        p.wait()
+        if p.returncode != 0:
+            print("ERROR (transfer_archive_to_remote): command failed\n" + " ".join(cmd))
+            exit(1)
+    os.remove(local_archive)
 
 
 def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, tasks_per_job,
@@ -1175,6 +1304,17 @@ def highly_parallel_job_manager(options, exec_filename,
     memory_per_cpu = options['memory_per_cpu']
     only_gather = options['only_gather']
     staggered = options['staggered']
+    stagger_time = options['stagger_time']
+    transfer_archive = options['transfer_archive']
+
+    # Pre-flight check: is there enough space where the jobs will run?
+    if options['diskspace_required'] and not only_gather:
+        check_disk_space(
+            protocol_triad,
+            runtime_root_path,
+            options['diskspace_required'],
+            checkquota_command=options['checkquota_command']
+        )
 
     rerun = False
     already_rescheduled = set()
@@ -1211,7 +1351,8 @@ def highly_parallel_job_manager(options, exec_filename,
             data_transfer_protocol,
             env_instr=env_instr,
             build_envroot=gen_env_root_dir,
-            only_gather=only_gather
+            only_gather=only_gather,
+            rerun=rerun
         )
         gc.collect()
 
@@ -1240,7 +1381,9 @@ def highly_parallel_job_manager(options, exec_filename,
             mem=memory,
             mempercpu=memory_per_cpu,
             only_gather=only_gather,
-            staggered=staggered
+            staggered=staggered,
+            stagger_time=stagger_time,
+            transfer_archive=transfer_archive
         )
         log_txt += tmp_log_txt
         gc.collect()
