@@ -53,6 +53,20 @@ def parse_size(size_str):
         exit(1)
     return float(m.group(1)) * units[m.group(2)]
 
+def run_on_exec_host(protocol_triad, cmd):
+    """Runs a shell command on the machine where the jobs run (through ssh
+    for the remote protocols) and returns its return code and output"""
+
+    protocol, remote_machine, local_shared_folder = protocol_triad
+    if remote_machine and protocol != 'local-hpc':
+        cmd = ["ssh", remote_machine, cmd]
+    else:
+        cmd = ["bash", "-c", cmd]
+    if DEBUG:
+        print("COMMAND", " ".join(cmd))
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return p.returncode, p.stdout.decode('utf-8', errors='replace')
+
 def check_disk_space(protocol_triad, runtime_root_path, diskspace_required,
         checkquota_command="checkquota"):
     """Checks there are at least diskspace_required bytes free where the
@@ -61,19 +75,8 @@ def check_disk_space(protocol_triad, runtime_root_path, diskspace_required,
     i.e. mount point, used space, quota). If the command is not available or
     does not list the mount point, falls back on df"""
 
-    protocol, remote_machine, local_shared_folder = protocol_triad
-    ssh = ["ssh", remote_machine] if remote_machine and protocol != 'local-hpc' else []
     required = parse_size(diskspace_required)
-
-    def run(cmd):
-        if ssh:
-            cmd = ssh + [cmd]
-        else:
-            cmd = ["bash", "-c", cmd]
-        if DEBUG:
-            print("COMMAND", " ".join(cmd))
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        return p.returncode, p.stdout.decode('utf-8', errors='replace')
+    run = lambda cmd: run_on_exec_host(protocol_triad, cmd)
 
     # The root path might not exist yet: check its parent folder
     parent = os.path.dirname(reduceslash(runtime_root_path + "/")[:-1])
@@ -636,6 +639,67 @@ def transfer_archive_to_remote(remote_machine, cache_dir, batch_job_code,
     os.remove(local_archive)
 
 
+def read_manager_activity(protocol_triad, fs_locations, batch_job_code):
+    """Reads the activity check files written by the node managers.
+    Returns {job_id : {'machine' : hostname, 'start' : time, 'end' : time,
+    'seen' : time}} (times in seconds since epoch). 'start' is missing if the
+    manager never ran, 'end' if it did not finish, 'seen' is the last time
+    the manager touched the file"""
+
+    prefix = ".manager_activity_check_" + batch_job_code
+    cmd = ('for f in {0}{1}*; do [ -f "$f" ] || continue; echo "File: $(basename "$f")"; '
+        'cat "$f"; echo; echo "Seen: $(date -r "$f" +%s)"; done').format(
+        fs_locations["runtime_exec"], prefix)
+    rc, out = run_on_exec_host(protocol_triad, cmd)
+
+    activity, job_id = {}, None
+    for line in out.splitlines():
+        key, _, value = line.partition(":")
+        value = value.strip()
+        if key == "File":
+            suffix = value[len(prefix):]
+            job_id = int(suffix) if suffix.isdigit() else None
+            if job_id is not None:
+                activity[job_id] = {}
+        elif job_id is None:
+            continue
+        elif key == "Machine" and value:
+            activity[job_id]['machine'] = value
+        elif key in ("Start", "End", "Seen") and value.isdigit():
+            activity[job_id][key.lower()] = int(value)
+    return activity
+
+
+def abort_run(protocol_triad, scheduler, fs_locations, batch_job_code,
+        not_started, scheduler_ids):
+    """Called when some node managers ended without running any task: shows
+    their error logs, cancels all the jobs of the run and exits"""
+
+    exe = fs_locations["runtime_exec"]
+    print(("\nERROR (remote_job_control): the job manager of node(s) {0} ended "
+        "without starting any task.\nThis usually means the command could not be "
+        "run on the node, e.g. singularity could not open the container (check the "
+        "singularity, singularity_container and singularity_modload options)").format(
+        ", ".join(str(j).zfill(3) for j in sorted(not_started))))
+    for job_id in sorted(not_started):
+        logs = " ".join("{0}taskfile_{1}{2}.{3}.txt".format(exe, batch_job_code, str(job_id).zfill(3), x)
+            for x in ["err", "out"])
+        rc, out = run_on_exec_host(protocol_triad,
+            'for f in {0}; do [ -s "$f" ] && echo "--- $f" && tail -n 20 "$f"; done'.format(logs))
+        print(out if out.strip() else "No job log found for node {0} in {1}".format(str(job_id).zfill(3), exe))
+
+    # Stop everything that is still queued or running
+    print("Cancelling all jobs of the run")
+    if protocol_triad[0] == 'local':
+        subprocess.run(["pkill", "-f", "manager_{0}".format(batch_job_code)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif scheduler_ids:
+        cancel = {"slurm" : "scancel", "oar" : "oardel"}[scheduler]
+        run_on_exec_host(protocol_triad, "{0} {1}".format(cancel, " ".join(sorted(scheduler_ids))))
+    print("The files of the run have been left in {0} for inspection".format(fs_locations["runtime_root"]))
+    exit(1)
+
+
 def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, tasks_per_job,
         waiting_time, data_transfer_protocol, log_folder, only_gather=False):
     # There must be a passwordless connection between the two machines: to
@@ -699,13 +763,10 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
         waitcount[job_id] = 0 
 
     is_over = False
-    chrono_on = {job_id : False for job_id, task_list in tasks_per_job}
-    time_start = {job_id : 0 for job_id, task_list in tasks_per_job}
-    time_end = {job_id : 0 for job_id, task_list in tasks_per_job}
-    machine_names = {job_id : 'NoHostname' for job_id, task_list in tasks_per_job}
-    job_times = {job_id : 0 for job_id, task_list in tasks_per_job}
-    hasrun = {job_id : False for job_id, task_list in tasks_per_job}
-    sc, wc = 0, 0
+    # Scheduler states of jobs that are over and will not be resubmitted
+    ended_states = {"slurm" : ["COMPLETED", "CANCELLED", "FAILED"],
+        "oar" : ["Terminated", "Cancelled", "Error"]}[scheduler]
+    started_ok = set()  # Nodes whose manager is known to have started
     first_time = True
     nocache_count = 0
     no_entry = False
@@ -717,13 +778,6 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
         else:
             first_time = False
         is_over = True
-
-        # Start/stop chronometer
-        for job_id, task_list in tasks_per_job:
-            if chrono_on[job_id] and not time_start[job_id]:
-                time_start[job_id] = time.time()
-            if not chrono_on[job_id] and time_start[job_id]:
-                time_end[job_id] = time.time()
 
         if protocol == 'local-hpc':
             jh_cmd = ["bash", fs_locations["build_exec"] + 'submit_status.sh']
@@ -782,6 +836,7 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
  
         all_completed = True
         resubmit_IDs = []
+        ended_IDs = []
         if protocol == "local" or protocol == "local-hpc":
             prefix = fs_locations["runtime_exec"]
         else:
@@ -791,6 +846,8 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
                 if fline.strip():
                     print(fline.strip())
                     fields = fline.split()
+                    if len(fields) == 2 and fields[1] in ended_states:
+                        ended_IDs.append(fields[0])
                     # There can be lines with empty status (for which len(fields) == 1)
                     # List all reasons for 
                     if scheduler == "slurm":
@@ -811,6 +868,23 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
                 if fline.strip():
                     fields = fline.split()
                     id_to_jobname[fields[1]] = fields[0]
+
+        # A node manager whose job is over must have started: if it did not
+        #  (e.g. singularity could not open the container), stop everything
+        if not only_gather:
+            if protocol == 'local':
+                ended = [job_id for job_id, task_list in tasks_per_job
+                    if subprocess.run(["pgrep", "-f", "outer_manager_{0}{1}.sh".format(batch_job_code, str(job_id).zfill(3))],
+                        stdout=subprocess.DEVNULL).returncode != 0]
+            else:
+                ended = [int(id_to_jobname[i][len(batch_job_code):]) for i in ended_IDs if i in id_to_jobname]
+            ended = set(ended) - started_ok
+            if ended:
+                activity = read_manager_activity(protocol_triad, fs_locations, batch_job_code)
+                started_ok |= {job_id for job_id in ended if 'start' in activity.get(job_id, {})}
+                if ended - started_ok:
+                    abort_run(protocol_triad, scheduler, fs_locations, batch_job_code,
+                        ended - started_ok, set(id_to_jobname))
 
         resubmit_jobnames = []
         for i in resubmit_IDs:
@@ -869,20 +943,26 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
         else:
             print("All jobs have been completed")
 
+    # Node runtimes are measured by the node managers themselves
+    #  (if a manager did not finish, e.g. walltime, its last sign of life is used)
+    activity = read_manager_activity(protocol_triad, fs_locations, batch_job_code)
     log_txt = "\n\n#LOCUSTS JOBS LOG\n"
-    time_now = time.time()
-    tot_runtime, totsq = 0, 0
+    runtimes = []
     for job_id, task_list in tasks_per_job:
-        if not time_end[job_id] - time_start[job_id] == 0:
-            runtime = waiting_time/2
-        else: 
-            runtime = time_end[job_id] - time_start[job_id]
-        tot_runtime += runtime
-        totsq += runtime**2
-        log_txt += "LocustsJobID {0} :\tHostname {1}\tRuntime {2}\tRuntime (seconds) {3}\tTasks {4}\n".format(job_id, machine_names[job_id], datetime.timedelta(seconds = int(runtime)), int(runtime), len(task_list))
+        act = activity.get(job_id, {})
+        if 'start' in act and ('end' in act or 'seen' in act):
+            runtime = max(0, act.get('end', act.get('seen')) - act['start'])
+            runtimes.append(runtime)
+            rtxt = "{0}\tRuntime (seconds) {1}".format(datetime.timedelta(seconds = int(runtime)), int(runtime))
+        else:
+            rtxt = "unknown\tRuntime (seconds) unknown"
+        log_txt += "LocustsJobID {0} :\tHostname {1}\tRuntime {2}\tTasks {3}\n".format(job_id, act.get('machine', 'NoHostname'), rtxt, len(task_list))
 
-    av_runtime = tot_runtime/len(tasks_per_job)
-    stdev_runtime = (totsq/len(tasks_per_job) - av_runtime**2)**0.5
+    tot_runtime = sum(runtimes)
+    av_runtime = tot_runtime/len(runtimes) if runtimes else 0
+    stdev_runtime = max(0, sum(x**2 for x in runtimes)/len(runtimes) - av_runtime**2)**0.5 if runtimes else 0
+    if len(runtimes) < len(tasks_per_job):
+        log_txt += "WARNING: the runtime of {0} node(s) is unknown and is not counted below\n".format(len(tasks_per_job) - len(runtimes))
     log_txt += "\n\nTotal computing time :\t{0}\tSeconds {1}\n".format(datetime.timedelta(seconds = int(tot_runtime)), int(tot_runtime))
     log_txt += "Average computing time per node:\t{0}\tSeconds {1}\n".format(datetime.timedelta(seconds = int(av_runtime)), int(av_runtime))
     log_txt += "Time imbalance (std dev):\t{0}\tSeconds {1}\n".format(datetime.timedelta(seconds = int(stdev_runtime)), int(stdev_runtime))
