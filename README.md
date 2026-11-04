@@ -184,7 +184,7 @@ The parameter file contains one option per line, in the format `option_name valu
 | `run_on_hpc_local` | `False` | Locusts runs directly on the HPC (e.g. on a login node) and submits the jobs from there |
 | `host_name` | | The HPC address for the SSH connection. A passwordless connection is needed (e.g. with `ssh-agent` and `ssh-add`) |
 | `hpc_exec_dir` | | Path on the HPC where the jobs will be executed and the temporary files stored. Its parent folder must exist; the folder itself must not |
-| `local_shared_dir` | | Local path of a folder shared with the HPC. In this case, `hpc_exec_dir` must be the path of the same folder as seen from the HPC |
+| `local_shared_dir` | | Local path of a folder shared with the HPC. In this case, `hpc_exec_dir` must be the path of the same folder as seen from the HPC. Before starting, locusts checks this by writing a test file in `local_shared_dir` and looking for it in `hpc_exec_dir` through SSH; the parent folders of both paths must already exist |
 | `scheduler` | `slurm` | `slurm` or `oar` |
 | `requested_nodes` | | Maximum number of nodes to use |
 | `cpus_per_node` | | Number of tasks run at the same time on each node |
@@ -194,6 +194,7 @@ The parameter file contains one option per line, in the format `option_name valu
 | `email_address` | | Address for the scheduler notifications |
 | `extra_outer_statements` | | Statements added to the job script before the tasks are launched (e.g. `module load ...`) |
 | `singularity`, `singularity_container`, `singularity_modload` | | Singularity executable, container and module loading statement, if the tasks have to run in a container |
+| `singularity_preflight` | `True` | Before submitting, check on the submission machine that the module loads, the singularity command works, and the container exists and can be opened. Set to `False` if singularity or the container are only available on the compute nodes |
 | `number_of_processors` | `1` | Number of tasks run at the same time in local mode |
 | `data_transfer_protocol` | `rsync` script | A script taking a source and a destination, used for all file transfers to and from the HPC |
 | `transfer_archive` | `False` | Send the filesystem to the HPC as a single `.tar.gz` archive instead of file by file (much faster with many small files) |

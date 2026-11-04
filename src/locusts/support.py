@@ -8,6 +8,8 @@ import shutil
 import datetime
 import subprocess
 import tarfile
+import shlex
+import socket
 
 global DEBUG
 DEBUG = True if "--locusts-debug" in sys.argv else False

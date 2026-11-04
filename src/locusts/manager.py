@@ -53,19 +53,133 @@ def parse_size(size_str):
         exit(1)
     return float(m.group(1)) * units[m.group(2)]
 
-def run_on_exec_host(protocol_triad, cmd):
+def run_on_exec_host(protocol_triad, cmd, login=False, with_stderr=False):
     """Runs a shell command on the machine where the jobs run (through ssh
-    for the remote protocols) and returns its return code and output"""
+    for the remote protocols) and returns its return code and output.
+    login: run it in a login shell (e.g. for the module command to be defined)
+    with_stderr: the output also contains the error messages"""
 
     protocol, remote_machine, local_shared_folder = protocol_triad
+    if login:
+        cmd = "bash -lc " + shlex.quote(cmd)
     if remote_machine and protocol != 'local-hpc':
         cmd = ["ssh", remote_machine, cmd]
     else:
         cmd = ["bash", "-c", cmd]
     if DEBUG:
         print("COMMAND", " ".join(cmd))
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    p = subprocess.run(cmd, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT if with_stderr else subprocess.DEVNULL)
     return p.returncode, p.stdout.decode('utf-8', errors='replace')
+
+def check_shared_folder(protocol_triad, runtime_root_path):
+    """remote-sharedfs: local_shared_dir (seen from here) and hpc_exec_dir
+    (seen from host_name) must be the same folder. Checks it by writing a
+    marker file locally and looking for it on the remote machine"""
+
+    protocol, remote_machine, local_shared_folder = protocol_triad
+    local_path = os.path.abspath(local_shared_folder)
+    remote_path = runtime_root_path.rstrip("/")
+    local_parent = os.path.dirname(local_path)
+    explanation = ("local_shared_dir must be the path of a folder that is shared between "
+        "this machine ({0}) and {1}, as seen from this machine. hpc_exec_dir must be the path "
+        "of that same folder, as seen from {1}.").format(socket.gethostname(), remote_machine)
+
+    def fail(msg):
+        print("ERROR (check_shared_folder): " + msg)
+        print("  local_shared_dir: {0}\n  hpc_exec_dir:     {1}".format(local_path, remote_path))
+        print(explanation)
+        exit(1)
+
+    # Local side
+    if not os.path.isdir(local_parent):
+        fail(("the parent folder {0} of local_shared_dir does not exist on this machine. "
+            "Is the shared filesystem mounted here, and is the path correct?").format(local_parent))
+    if os.path.exists(local_path) and not os.path.isdir(local_path):
+        fail("local_shared_dir exists but it is not a folder")
+    if not os.access(local_parent if not os.path.exists(local_path) else local_path, os.W_OK):
+        fail("no write permission in {0}".format(
+            local_parent if not os.path.exists(local_path) else local_path))
+
+    # Remote side
+    rc, out = run_on_exec_host(protocol_triad, "test -d {0}".format(shlex.quote(os.path.dirname(remote_path))))
+    if rc == 255:
+        fail("cannot connect to {0} through ssh".format(remote_machine))
+    if rc != 0:
+        fail("the parent folder {0} of hpc_exec_dir does not exist on {1}".format(
+            os.path.dirname(remote_path), remote_machine))
+
+    # Same folder? A marker written here must be visible there
+    created = not os.path.exists(local_path)
+    if created:
+        os.mkdir(local_path)
+    marker = ".locusts_shared_check_{0}_{1}".format(os.getpid(), int(time.time()))
+    with open(os.path.join(local_path, marker), "w") as f:
+        f.write("locusts\n")
+    seen = False
+    for attempt in range(3):  # Shared filesystems can take a moment to propagate
+        rc, out = run_on_exec_host(protocol_triad, "test -e {0}".format(
+            shlex.quote(remote_path + "/" + marker)))
+        if rc == 0:
+            seen = True
+            break
+        time.sleep(2)
+    os.remove(os.path.join(local_path, marker))
+    if not seen:
+        if created:
+            os.rmdir(local_path)
+        fail(("a test file written in local_shared_dir is not visible in hpc_exec_dir on {0}: "
+            "the two paths do not point to the same folder").format(remote_machine))
+    if created:
+        os.rmdir(local_path)  # Leave the filesystem as it was: it is created later
+    print("Shared folder check passed: {0} is {1}:{2}".format(local_path, remote_machine, remote_path))
+
+
+def check_singularity(protocol_triad, singinfo):
+    """Checks that singularity is available, that the command calling it works
+    and that the container exists and can be opened, on the machine from
+    where the jobs are submitted"""
+
+    singularity, container, modload = singinfo
+    where = protocol_triad[1] or "this machine"
+    run = lambda cmd: run_on_exec_host(protocol_triad, cmd, login=True, with_stderr=True)
+
+    def fail(msg, out=""):
+        print("ERROR (check_singularity): " + msg)
+        if out.strip():
+            print("\n".join(out.strip().splitlines()[-20:]))
+        print(("If singularity or the container are only available on the compute "
+            "nodes, disable this check with: singularity_preflight False"))
+        exit(1)
+
+    if not container:
+        fail("the singularity option requires singularity_container")
+
+    # The module loading statement is run before each command, as in the job scripts
+    pre = modload + " && " if modload else ""
+    if modload:
+        rc, out = run(modload)
+        if rc != 0:
+            fail("singularity_modload \"{0}\" failed on {1}".format(modload, where), out)
+    rc, out = run(pre + "command -v " + singularity)
+    if rc != 0:
+        fail("singularity command \"{0}\" not found on {1}{2}".format(singularity, where,
+            " after \"{0}\"".format(modload) if modload else ""), out)
+    rc, out = run(pre + singularity + " --version")
+    if rc != 0:
+        fail(("\"{0} --version\" failed on {1}: \"{0}\" does not seem to be "
+            "a working singularity/apptainer command").format(singularity, where), out)
+    version = out.strip().splitlines()[-1] if out.strip() else ""
+    rc, out = run("test -e " + container)
+    if rc != 0:
+        fail("container {0} not found on {1}".format(container, where), out)
+    rc, out = run("test -r " + container)
+    if rc != 0:
+        fail("container {0} is not readable on {1}".format(container, where), out)
+    rc, out = run(pre + singularity + " exec " + container + " true")
+    if rc != 0:
+        fail("{0} could not open the container {1} on {2}".format(singularity, container, where), out)
+    print("Singularity check passed: {0} ({1}), container {2}".format(singularity, version, container))
 
 def check_disk_space(protocol_triad, runtime_root_path, diskspace_required,
         checkquota_command="checkquota"):
@@ -564,26 +678,27 @@ def create_manager_scripts(protocol_triad, cache_dir, task_folders, scheduler, p
         cmf.write("\n".join(manager_cmd))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'periodic_check.sh'])
     with open(fs_locations["build_exec"] + 'submit.sh', 'w') as sf:
-        sf.write("rm {0}/submit.log\n".format(fs_locations["runtime_exec"]))
+        # The errors of the submission commands are kept in submit.err (see check_submission)
+        sf.write("rm -f {0}/submit.log {0}/submit.err\n".format(fs_locations["runtime_exec"]))
         for job_id, task_list in tasks_per_job:
             if protocol == "local":
                 sf.write("RES=$({0} {1}/outer_manager_{2}{3}.sh & echo $!)\necho \"{2}{3} ${{RES##* }}\" >> {1}/submit.log\n".format("bash", fs_locations["runtime_exec"],
                     batch_job_code, str(job_id).zfill(3)))
             else:
                 if scheduler == "slurm":
-                    sf.write("RES=$({0} {1}/outer_manager_{2}{3}.sh)\necho \"{2}{3} ${{RES##* }}\" >> {1}/submit.log\n".format(scheduler_submit[scheduler], fs_locations["runtime_exec"],
+                    sf.write("RES=$({0} {1}/outer_manager_{2}{3}.sh 2>> {1}/submit.err)\necho \"{2}{3} ${{RES##* }}\" >> {1}/submit.log\n".format(scheduler_submit[scheduler], fs_locations["runtime_exec"],
                       batch_job_code, str(job_id).zfill(3)))
                 elif scheduler == "oar":
-                    sf.write("{0} {1}/outer_manager_{2}{3}.sh >> {1}/outer_manager_{2}{3}.log\nJOB_ID=$(tail -n1 {1}/outer_manager_{2}{3}.log | awk -F\"=\" '{{print $2}}')\necho \"{2}{3} ${{JOB_ID}}\" >> {1}/submit.log\n".format(scheduler_submit[scheduler], fs_locations["runtime_exec"],
+                    sf.write("{0} {1}/outer_manager_{2}{3}.sh >> {1}/outer_manager_{2}{3}.log 2>> {1}/submit.err\nJOB_ID=$(tail -n1 {1}/outer_manager_{2}{3}.log | awk -F\"=\" '{{print $2}}')\necho \"{2}{3} ${{JOB_ID}}\" >> {1}/submit.log\n".format(scheduler_submit[scheduler], fs_locations["runtime_exec"],
                       batch_job_code, str(job_id).zfill(3)))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'submit.sh'])
     with open(fs_locations["build_exec"] + 'submit_status.sh', 'w') as sf:
         sf.write("rm {0}/submit_status.log\n".format(fs_locations["runtime_exec"]))
         #sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`/usr/local/bin/dashboard_cli ${{x}} | grep -A1 partition | awk 'NR==2{{print $3}}'` &\n\tsleep 10\n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone\n".format(fs_locations["runtime_exec"]))
         if scheduler == "slurm": # Assumes the presence of the jobhist command
-            sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`jobhist ${{x}} | grep -A1 Partition | awk 'NR==2{{print $3}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone &>> {0}/submit_status.err\n".format(fs_locations["runtime_exec"]))
+            sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`jobhist ${{x}} | grep -A1 Partition | awk 'NR==2{{print $3}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone >> {0}/submit_status.err 2>&1\n".format(fs_locations["runtime_exec"]))
         if scheduler == "oar": # Assumes lines of submit.log like this: JobName XXXX
-            sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`oarstat -s -j ${{x}} | awk '{{print $NF}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone &>> {0}/submit_status.err\n".format(fs_locations["runtime_exec"]))
+            sf.write("for x in `cat {0}/submit.log | awk '{{print $2}}'`\ndo\n\tSTATUS=`oarstat -s -j ${{x}} | awk '{{print $NF}}'` \n\techo \"${{x}} ${{STATUS}}\" >> {0}/submit_status.log\ndone >> {0}/submit_status.err 2>&1\n".format(fs_locations["runtime_exec"]))
     subprocess.call(["chmod", "777", fs_locations["build_exec"] + 'submit_status.sh'])
 
     if protocol == 'remote' and transfer_archive:
@@ -693,10 +808,85 @@ def abort_run(protocol_triad, scheduler, fs_locations, batch_job_code,
     if protocol_triad[0] == 'local':
         subprocess.run(["pkill", "-f", "manager_{0}".format(batch_job_code)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    elif scheduler_ids:
+    else:
+        cancel_jobs(protocol_triad, scheduler, scheduler_ids)
+    print("The files of the run have been left in {0} for inspection".format(fs_locations["runtime_root"]))
+    exit(1)
+
+
+def cancel_jobs(protocol_triad, scheduler, scheduler_ids):
+    """Cancels the given jobs of the queueing system"""
+
+    if scheduler_ids:
         cancel = {"slurm" : "scancel", "oar" : "oardel"}[scheduler]
         run_on_exec_host(protocol_triad, "{0} {1}".format(cancel, " ".join(sorted(scheduler_ids))))
-    print("The files of the run have been left in {0} for inspection".format(fs_locations["runtime_root"]))
+
+
+def check_submission(protocol_triad, scheduler, fs_locations, tasks_per_job,
+        batch_job_code, submit_returncode):
+    """Checks that the queueing system accepted all the jobs, i.e. that
+    submit.log contains a job ID for each node. Otherwise shows the errors of
+    the submission commands, cancels the accepted jobs and exits"""
+
+    exe = fs_locations["runtime_exec"]
+    rc, out = run_on_exec_host(protocol_triad, "cat {0}submit.log".format(exe))
+    scheduler_ids = {}
+    for line in out.splitlines():
+        fields = line.split()
+        if fields:
+            scheduler_ids[fields[0]] = fields[1] if len(fields) > 1 else ""
+    jobnames = [batch_job_code + str(job_id).zfill(3) for job_id, task_list in tasks_per_job]
+    refused = [x for x in jobnames if not re.fullmatch(r"\d+", scheduler_ids.get(x, ""))]
+    if not refused:
+        print("All {0} jobs have been accepted by the queueing system".format(len(jobnames)))
+        return
+
+    print(("\nERROR (check_submission): the queueing system did not accept "
+        "{0} of the {1} jobs ({2})").format(len(refused), len(jobnames), ", ".join(refused)))
+    if submit_returncode != 0 and not out.strip():
+        print("The submission script {0}submit.sh could not be run (exit code {1})".format(
+            exe, submit_returncode))
+    rc, err = run_on_exec_host(protocol_triad, "tail -n 30 {0}submit.err".format(exe))
+    if err.strip():
+        print("Errors of the submission command ({0}):\n{1}".format(
+            {"slurm" : "sbatch", "oar" : "oarsub"}[scheduler], err.rstrip()))
+    if scheduler == "oar":
+        rc, err = run_on_exec_host(protocol_triad, "tail -n 10 {0}".format(
+            " ".join("{0}outer_manager_{1}.log".format(exe, x) for x in refused)))
+        if err.strip():
+            print(err.rstrip())
+    print(("Common causes: an option of the parameter file not valid on this cluster "
+        "(partition, constraint, walltime, memory...), the wrong scheduler "
+        "(scheduler option), or submitting from a machine where submission "
+        "is not allowed (e.g. a compute node)"))
+
+    accepted = [scheduler_ids[x] for x in jobnames if x not in refused]
+    if accepted:
+        print("Cancelling the {0} accepted jobs".format(len(accepted)))
+        cancel_jobs(protocol_triad, scheduler, accepted)
+    exit(1)
+
+
+def no_status_error(protocol_triad, scheduler, fs_locations, attempts):
+    """Called when the status of the jobs could not be retrieved"""
+
+    exe = fs_locations["runtime_exec"]
+    rc, out = run_on_exec_host(protocol_triad, "cat {0}submit.log".format(exe))
+    scheduler_ids = [line.split()[1] for line in out.splitlines() if len(line.split()) == 2]
+    print(("\nERROR (remote_job_control): no status has been retrieved for the "
+        "jobs of this run after {0} attempt(s).").format(attempts))
+    if scheduler_ids:
+        print("Job IDs: {0}".format(", ".join(scheduler_ids)))
+        print(("The jobs probably all died immediately, or the status command "
+            "({0}) is not available or does not know them").format(
+            {"slurm" : "jobhist", "oar" : "oarstat"}[scheduler]))
+    else:
+        print(("No job ID was found in {0}submit.log: the jobs were probably "
+            "never submitted").format(exe))
+    rc, err = run_on_exec_host(protocol_triad, "tail -n 20 {0}submit_status.err".format(exe))
+    if err.strip():
+        print("Errors of the status command:\n" + err.rstrip())
+    print("Check the queue for any job of this run still alive, and cancel it if needed")
     exit(1)
 
 
@@ -727,6 +917,8 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
                     stdout=devnull
                 )
             p.wait()
+            check_submission(protocol_triad, scheduler, fs_locations,
+                tasks_per_job, batch_job_code, p.returncode)
             time.sleep(20)
         elif protocol != 'local':
             chk_cmd = [
@@ -745,6 +937,8 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
                     stdout=devnull
                 )
             p.wait()
+            check_submission(protocol_triad, scheduler, fs_locations,
+                tasks_per_job, batch_job_code, p.returncode)
             time.sleep(20)
         else:
             # If no hpc, there is only one node, i.e. one manager
@@ -767,6 +961,8 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
     ended_states = {"slurm" : ["COMPLETED", "CANCELLED", "FAILED"],
         "oar" : ["Terminated", "Cancelled", "Error"]}[scheduler]
     started_ok = set()  # Nodes whose manager is known to have started
+    NO_STATUS_THR = 3  # Consecutive checks without any status before giving up
+    no_status_count = 0
     first_time = True
     nocache_count = 0
     no_entry = False
@@ -791,6 +987,15 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
             jh_cmd = ["bash", fs_locations["runtime_exec"] + 'submit_status.sh']
             jhcp_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'submit_status.log'), log_folder]
             jhcp2_cmd = ["cp", "{0}".format(fs_locations["runtime_exec"] + 'submit.log'), log_folder]
+
+        if protocol == "local" or protocol == "local-hpc":
+            prefix = fs_locations["runtime_exec"]
+        else:
+            prefix = log_folder
+            # Local copies of a previous check must not be mistaken for new ones
+            for fname in ["submit_status.log", "submit.log"]:
+                if os.path.exists(prefix + "/" + fname):
+                    os.remove(prefix + "/" + fname)
 
         if DEBUG:
             print("COMMAND", " ".join(jh_cmd))
@@ -837,37 +1042,52 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
         all_completed = True
         resubmit_IDs = []
         ended_IDs = []
-        if protocol == "local" or protocol == "local-hpc":
-            prefix = fs_locations["runtime_exec"]
-        else:
-            prefix = log_folder
-        with open(prefix + "/submit_status.log") as ssf:
-            for fline in ssf:
-                if fline.strip():
-                    print(fline.strip())
-                    fields = fline.split()
-                    if len(fields) == 2 and fields[1] in ended_states:
-                        ended_IDs.append(fields[0])
-                    # There can be lines with empty status (for which len(fields) == 1)
-                    # List all reasons for 
-                    if scheduler == "slurm":
-                        if not only_gather and not (len(fields) <2 or fields[1] == "COMPLETED" or fields[1] == "CANCELLED" or fields[1] == "TIMEOUT" or fields[1] == "NODE_FAIL" or fields[1] == "FAILED"):
-                            all_completed = False
-                            nocache_count += 1
-                            if len(fields)==2 and (fields[1] == "NODE_FAIL" or fields[1] == "TIMEOUT"):
-                                resubmit_IDs.append(fields[0])
-                    elif scheduler == "oar":
-                        if not only_gather and not (len(fields) <2 or fields[1] == "Terminated" or fields[1] == "Cancelled" or fields[1] == "Error"):
-                            all_completed = False
-                            nocache_count += 1
+        status_lines = []
+        if os.path.exists(prefix + "/submit_status.log"):
+            with open(prefix + "/submit_status.log") as ssf:
+                status_lines = ssf.readlines()
+        # No status at all: either no job ID was recorded (the jobs were never
+        #  submitted), the queueing system does not know the IDs (the jobs died
+        #  at once) or the status could not be retrieved this time
+        #  (not in local mode, where completion is checked on the manager processes,
+        #  nor when only gathering, where statuses are not used)
+        if (protocol != 'local' and not only_gather
+                and not any(len(x.split()) == 2 for x in status_lines)):
+            no_status_count += 1
+            if no_status_count >= NO_STATUS_THR:
+                no_status_error(protocol_triad, scheduler, fs_locations, no_status_count)
+            print("WARNING: no job status could be retrieved ({0}/{1}), retrying".format(
+                no_status_count, NO_STATUS_THR))
+            is_over = False
+            continue
+        no_status_count = 0
+        for fline in status_lines:
+            if fline.strip():
+                print(fline.strip())
+                fields = fline.split()
+                if len(fields) == 2 and fields[1] in ended_states:
+                    ended_IDs.append(fields[0])
+                # There can be lines with empty status (for which len(fields) == 1)
+                # List all reasons for 
+                if scheduler == "slurm":
+                    if not only_gather and not (len(fields) <2 or fields[1] == "COMPLETED" or fields[1] == "CANCELLED" or fields[1] == "TIMEOUT" or fields[1] == "NODE_FAIL" or fields[1] == "FAILED"):
+                        all_completed = False
+                        nocache_count += 1
+                        if len(fields)==2 and (fields[1] == "NODE_FAIL" or fields[1] == "TIMEOUT"):
+                            resubmit_IDs.append(fields[0])
+                elif scheduler == "oar":
+                    if not only_gather and not (len(fields) <2 or fields[1] == "Terminated" or fields[1] == "Cancelled" or fields[1] == "Error"):
+                        all_completed = False
+                        nocache_count += 1
 
         time.sleep(10)
         id_to_jobname = {}
-        with open(prefix + "/submit.log") as ssf:
-            for fline in ssf:
-                if fline.strip():
+        if os.path.exists(prefix + "/submit.log"):
+            with open(prefix + "/submit.log") as ssf:
+                for fline in ssf:
                     fields = fline.split()
-                    id_to_jobname[fields[1]] = fields[0]
+                    if len(fields) == 2:  # A refused submission leaves the ID empty
+                        id_to_jobname[fields[1]] = fields[0]
 
         # A node manager whose job is over must have started: if it did not
         #  (e.g. singularity could not open the container), stop everything
@@ -876,6 +1096,8 @@ def remote_job_control(protocol_triad, batch_job_code, scheduler, fs_locations, 
                 ended = [job_id for job_id, task_list in tasks_per_job
                     if subprocess.run(["pgrep", "-f", "outer_manager_{0}{1}.sh".format(batch_job_code, str(job_id).zfill(3))],
                         stdout=subprocess.DEVNULL).returncode != 0]
+                # No queueing system: the run is over when all managers are
+                all_completed = (len(ended) == len(tasks_per_job))
             else:
                 ended = [int(id_to_jobname[i][len(batch_job_code):]) for i in ended_IDs if i in id_to_jobname]
             ended = set(ended) - started_ok
@@ -1386,6 +1608,14 @@ def highly_parallel_job_manager(options, exec_filename,
     staggered = options['staggered']
     stagger_time = options['stagger_time']
     transfer_archive = options['transfer_archive']
+
+    # Pre-flight check: are local_shared_dir and hpc_exec_dir the same folder?
+    if protocol == 'remote-sharedfs':
+        check_shared_folder(protocol_triad, runtime_root_path)
+
+    # Pre-flight check: can the container be run?
+    if singinfo[0] and options['singularity_preflight'] and not only_gather:
+        check_singularity(protocol_triad, singinfo)
 
     # Pre-flight check: is there enough space where the jobs will run?
     if options['diskspace_required'] and not only_gather:
